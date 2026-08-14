@@ -29,24 +29,39 @@
 using namespace lightllm::engine;
 using namespace lightllm::kv_cache;
 
-// ---- Build a long English corpus; the model is prefill-limited here, so a
-// plain prose paragraph repeated is fine.  We feed token IDs directly, so the
-// prompt length is EXACT regardless of the C++ tokenizer's over-splitting.
-static const char* kBase =
+// ---- Build a long, VARIED English corpus.  Repeating a single paragraph makes
+// the model degrade (off-distribution repetition); a varied multi-topic passage
+// keeps generated output meaningful so the recorded text is useful.  We feed
+// token IDs directly, so the prompt length is EXACT regardless of the C++
+// tokenizer's over-splitting.
+static const char* kParagraphs[] = {
     "The capital of France is Paris, a city known for its rich history, art, and culture. "
     "It is one of the most visited cities in the world, famous for landmarks such as the "
-    "Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral. The city sits on the River "
-    "Seine and has been an important center of learning and innovation for centuries. "
+    "Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral. ",
+    "The city sits on the River Seine and has been an important center of learning and "
+    "innovation for centuries, home to universities, libraries, and world-class museums. ",
     "Paris is also a global hub for fashion, cuisine, and technology, attracting millions "
-    "of visitors every year who come to explore its museums, cafes, and historic boulevards. "
-    "The French capital has a unique blend of old and new, where medieval streets meet "
-    "modern architecture, and where tradition coexists with a vibrant start-up scene. ";
+    "of visitors every year who explore its cafes, galleries, and historic boulevards. ",
+    "The French capital blends old and new, where medieval streets meet modern "
+    "architecture and where tradition coexists with a vibrant start-up scene. ",
+    "France itself has a long and influential history, from the monarchy to the republic, "
+    "and its language and culture have spread around the world. ",
+    "Beyond Paris, the country is famous for its wine regions, alpine peaks, and "
+    "Mediterranean coastline, each with its own traditions and regional cuisine. ",
+    "In science, French researchers have made discoveries in physics, chemistry, and "
+    "mathematics that shaped modern thought and technology. ",
+    "The country also played a key role in European politics and the arts, producing "
+    "painters, writers, and composers whose work is still celebrated today. ",
+};
+static const int kNumParagraphs =
+    static_cast<int>(sizeof(kParagraphs) / sizeof(kParagraphs[0]));
 
 static std::string build_corpus(int target_tokens) {
-    // Repeat the base paragraph until it comfortably exceeds the target.
+    // Cycle through distinct paragraphs (varied content) until the corpus is
+    // comfortably longer than the target prompt length.
     std::string corpus;
-    int reps = (target_tokens / 40) + 4;  // ~40 tokens per base paragraph (rough)
-    for (int i = 0; i < reps; i++) corpus += kBase;
+    for (int i = 0; corpus.size() < (size_t)target_tokens * 4; i++)
+        corpus += kParagraphs[i % kNumParagraphs];
     return corpus;
 }
 
