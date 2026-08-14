@@ -13,12 +13,9 @@
 ///   TEST 5  — EDGE CASES: empty batch, 1-token prompt, EOS on first decode
 ///
 /// IMPLEMENTATION NOTE:
-///   The current InferenceEngine exposes generate() (blocking, single-request).
-///   The design reference describes Engine::step() for heterogeneous batches.
-///   This test bridges the gap by running a "batch-at-a-time" serve loop:
-///   the Scheduler decides *what* to process next, and the Engine processes
-///   each request completely via generate().  When Engine::step() lands this
-///   test will be updated to process truly mixed batches.
+///   The test drives the REAL serving pipeline: EngineServer::step() via
+///   BatchMainLoop (scheduler.step() -> engine.step() -> SampledToken), which
+///   processes truly mixed batches (prefill chunks + decode tokens together).
 ///
 /// INVARIANTS verified against the design reference:
 ///   - Scheduler state machine: WAITING -> DECODING -> FINISHED
@@ -47,6 +44,7 @@
 #include "lightllm/model/model_config.h"
 #include "lightllm/engine/engine.h"
 #include "lightllm/engine/scheduler.h"
+#include "lightllm/engine/batch_loop.h"
 #include "lightllm/kv_cache/block_allocator.h"
 
 using namespace lightllm;
@@ -83,10 +81,7 @@ static void cuda_check(const char* context) {
 // ============================================================================
 // Test-global model info (read from config.json at startup)
 // ============================================================================
-// The InferenceEngine class does not expose vocab_size / hidden_dim / num_layers
-// as public accessors in the current header (these are in the design reference
-// but not yet implemented).  We read the model config once and share it across
-// all tests.
+// Read the model config once and share it across all tests.
 struct ModelInfo {
     int vocab_size  = 0;
     int hidden_dim  = 0;
@@ -119,23 +114,14 @@ static void load_model_info(const char* model_dir) {
 }
 
 // ============================================================================
-// ServeLoop — minimal orchestration layer between Scheduler and Engine
+// ServeLoop — orchestration layer between Scheduler and Engine
 // ============================================================================
 ///
-/// Maintains per-request state, owns the scheduler and engine, and runs the
-/// main serving loop.  Designed to exercise the integration points between
-/// the scheduler and the engine.
-///
-/// Lifecycle (matches the design reference):
-///   1. add_request()   — submit prompt tokens + generation params
-///   2. run()           — loop: scheduler.step() -> process entries -> track results
-///   3. get_results()   — collect outputs after the loop finishes
-///
-/// STATE TRACKING (per-request, mirrors RequestState from the design):
-///   - num_prefilled    how many prompt tokens completed prefill
-///   - seq_len          prompt_len + generated_len
-///   - generated_tokens tokens produced during decode
-///   - finished         true when EOS emitted or max_new_tokens reached
+/// Thin adapter over EngineServer + BatchMainLoop (the real serving pipeline:
+/// scheduler.step() -> engine.step() -> SampledToken).  Keeps the ServeRequest
+/// surface (generated_tokens / finished / elapsed_ms / num_prefilled) so the
+/// test body below can read results uniformly.  The engine must outlive the
+/// ServeLoop.
 ///
 struct ServeRequest {
     int id;
@@ -157,151 +143,57 @@ struct ServeRequest {
 
 class ServeLoop {
 public:
-    /// Construct the serve loop with an existing engine and a new scheduler.
-    /// The engine must outlive the ServeLoop.
-    ServeLoop(InferenceEngine& engine,
+    /// Construct the serve loop with an existing EngineServer.  The engine
+    /// must outlive the ServeLoop.
+    ServeLoop(EngineServer& engine,
               SchedulerPolicy policy = SchedulerPolicy::DecodeFirst,
               int chunk_size = 16,
               int max_batch_tokens = 256)
-        : engine_(engine)
-        , scheduler_(Scheduler::create(policy, chunk_size))
+        : loop_(engine, policy, chunk_size, max_batch_tokens)
         , policy_(policy)
-    {
-        (void)max_batch_tokens;  // used when batch step() lands
-    }
+    {}
 
-    /// Submit a request.  Returns the assigned request ID.
+    /// Submit a request (immediately scheduled into the batch loop).
+    /// Returns the assigned request ID.
     int add_request(const std::vector<int>& prompt_tokens,
                     int max_new_tokens = 64,
                     int eos_token_id = 151643) {
-        int id = next_id_++;
+        int id = loop_.submit(prompt_tokens, max_new_tokens, eos_token_id,
+                              /*json_schema=*/"", /*regex=*/"",
+                              /*temperature=*/0.8f);
 
         ServeRequest sr;
         sr.id              = id;
         sr.prompt_tokens   = prompt_tokens;
         sr.max_new_tokens  = max_new_tokens;
         sr.eos_token_id    = eos_token_id;
-
         requests_[id] = std::move(sr);
-
-        // Create the scheduler-side Request (unified state).
-        Request sreq;
-        sreq.id              = id;
-        sreq.prompt_tokens   = prompt_tokens;
-        sreq.max_new_tokens  = max_new_tokens;
-        sreq.eos_token_id    = eos_token_id;
-        sreq.state           = Request::WAITING;
-        sreq.num_computed    = 0;
-
-        scheduler_->add_request(std::move(sreq));
         return id;
     }
 
     /// Run the serving loop until all requests are finished.
-    ///
-    /// For each ScheduleStep produced by the scheduler:
-    ///   - Prefill entries for requests not yet processed trigger a full
-    ///     engine.generate() call (prefill + all decode tokens).
-    ///   - If the scheduler is FCFS, each step contains one entry at a time.
-    ///   - If the scheduler is DecodeFirst/PrefillFirst, steps may contain
-    ///     mixed entries from multiple requests.
-    ///
-    /// After engine.generate() returns, the request is marked finished and
-    /// the scheduler is notified via finish_request().
-    ///
-    /// POST-CONDITION: scheduler_->num_active() == 0 and all requests are
-    /// in FINISHED state.
+    /// BatchMainLoop drives the real Scheduler -> EngineServer::step() cycle
+    /// (heterogeneous prefill+decode batches, prefix cache, KV lifecycle).
     void run() {
-        int step_count = 0;
-        int max_steps = 10000;  // safety bound
+        loop_.run();
 
-        while (scheduler_->num_active() > 0 && step_count < max_steps) {
-            auto step = scheduler_->step();
-            step_count++;
-
-            if (step.empty()) {
-                // No work remains — the scheduler should be idle.
-                // This can happen when all waiting+decoding lists are drained.
-                continue;
-            }
-
-            // Process entries from this step.
-            // For the batch-at-a-time approach, we process each prefill
-            // entry's full request via engine.generate().
-            for (auto& entry : step.entries) {
-                auto it = requests_.find(entry.request_idx);
-                if (it == requests_.end()) {
-                    fprintf(stderr,
-                        "WARNING: step references unknown request %d\n",
-                        entry.request_idx);
-                    continue;
-                }
-
-                auto& req = it->second;
-
-                if (req.finished) {
-                    // Already processed — scheduler may not have purged yet.
-                    continue;
-                }
-
-                if (entry.is_prefill && req.num_prefilled == 0) {
-                    // First prefill encounter for this request — run full
-                    // generation (prefill + decode) in one shot.
-                    //
-                    // NOTE: When Engine::step() lands, this branch becomes
-                    // the prefill-chunk forward pass, and the decode loop
-                    // (below) becomes a separate branch.
-
-                    GenerateParams params;
-                    params.max_new_tokens = req.max_new_tokens;
-                    params.eos_token_id   = req.eos_token_id;
-                    params.temperature    = 0.8f;
-                    params.top_k          = 40;
-                    params.top_p          = 0.9f;
-                    params.seed           = 42 + req.id;
-
-                    auto t0 = std::chrono::steady_clock::now();
-                    GenerateResult result = engine_.generate(
-                        req.prompt_tokens, params);
-                    auto t1 = std::chrono::steady_clock::now();
-                    req.elapsed_ms =
-                        static_cast<double>(
-                            std::chrono::duration_cast<std::chrono::microseconds>(
-                                t1 - t0).count()) / 1000.0;
-
-                    // Extract generated tokens (skip prompt).
-                    req.generated_tokens.clear();
-                    for (size_t i = req.prompt_tokens.size();
-                         i < result.token_ids.size(); i++) {
-                        req.generated_tokens.push_back(result.token_ids[i]);
-                    }
-
-                    req.num_prefilled = static_cast<int>(
-                        req.prompt_tokens.size());
-                    req.finished = true;
-
-                    // Notify scheduler so it can purge the request.
-                    scheduler_->finish_request(req.id);
-                }
-                // Else: this is a decode entry or a chunked prefill entry
-                // for an already-processed request.  The batch-at-a-time
-                // approach handles the full request on the first prefill
-                // encounter, so we skip subsequent entries.
-            }
-        }
-
-        if (step_count >= max_steps) {
-            fprintf(stderr, "WARNING: serve loop hit max steps (%d)\n",
-                    max_steps);
+        // Populate the ServeRequest results from the loop's bookkeeping.
+        for (auto& kv : requests_) {
+            ServeRequest& sr = kv.second;
+            sr.generated_tokens = loop_.generated_tokens(sr.id);
+            sr.finished         = loop_.metrics(sr.id).finished;
+            sr.elapsed_ms       = loop_.metrics(sr.id).latency_ms();
+            // EngineServer always completes prefill before decode.
+            sr.num_prefilled    = static_cast<int>(sr.prompt_tokens.size());
         }
 
         printf("[ServeLoop] Finished in %d scheduler steps, "
                "%d requests processed\n",
-               step_count, static_cast<int>(requests_.size()));
+               loop_.total_steps(), static_cast<int>(requests_.size()));
     }
 
     /// Access results after run() completes.
-    const ServeRequest& result(int req_id) const {
+    ServeRequest& result(int req_id) {
         auto it = requests_.find(req_id);
         if (it == requests_.end())
             throw std::runtime_error("Unknown request ID: "
@@ -313,19 +205,17 @@ public:
     int num_requests() const { return static_cast<int>(requests_.size()); }
 
     /// Access the underlying scheduler (for policy-specific checks).
-    Scheduler& scheduler() { return *scheduler_; }
+    Scheduler& scheduler() { return loop_.scheduler(); }
 
     /// Access the underlying engine.
-    InferenceEngine& engine() { return engine_; }
+    EngineServer& engine() { return loop_.engine(); }
 
     SchedulerPolicy policy() const { return policy_; }
 
 private:
-    InferenceEngine& engine_;
-    std::unique_ptr<Scheduler> scheduler_;
+    BatchMainLoop loop_;
     SchedulerPolicy policy_;
     std::unordered_map<int, ServeRequest> requests_;
-    int next_id_ = 0;
 };
 
 // ============================================================================
@@ -356,7 +246,7 @@ static double compute_tok_s(int num_tokens, double elapsed_ms) {
 ///   - Throughput meets baseline (> 5 tok/s)
 ///   - The number of generated tokens is > 0
 ///   - No EOS appears in the first few generated tokens (not degenerate)
-static void test_single_request(InferenceEngine& engine) {
+static void test_single_request(EngineServer& engine) {
     printf("\n========== TEST 1: SINGLE REQUEST ==========\n");
 
     // Prompt: "The capital of France is"
@@ -427,7 +317,7 @@ static void test_single_request(InferenceEngine& engine) {
 /// them (when using DecodeFirst or PrefillFirst), and the engine processes
 /// each one.  Verifies all complete with valid, diverse outputs and that
 /// total throughput meets the batched baseline (> 15 tok/s).
-static void test_three_concurrent(InferenceEngine& engine) {
+static void test_three_concurrent(EngineServer& engine) {
     printf("\n========== TEST 2: THREE CONCURRENT REQUESTS ==========\n");
 
     // Three distinct prompts
@@ -539,7 +429,7 @@ static void test_three_concurrent(InferenceEngine& engine) {
 ///   3c. STATE MACHINE — WAITING -> DECODING -> FINISHED
 ///   3d. SCHEDULER FACTORY — Scheduler::create() returns correct types
 ///   3e. CHUNKED PREFILL — a long prompt is split across multiple chunks
-static void test_scheduler_integration(InferenceEngine& engine) {
+static void test_scheduler_integration(EngineServer& engine) {
     printf("\n========== TEST 3: SCHEDULER INTEGRATION ==========\n");
 
     // --- 3a: DecodeFirst policy ---
@@ -747,7 +637,7 @@ static void test_scheduler_integration(InferenceEngine& engine) {
 /// Submits five requests with different prompt lengths (1, 3, 5, 4, 6 tokens)
 /// and different max_new_tokens values.  Verifies all complete on time,
 /// all outputs are valid, and no blocks leak.
-static void test_stress_mixed_lengths(InferenceEngine& engine) {
+static void test_stress_mixed_lengths(EngineServer& engine) {
     printf("\n========== TEST 4: STRESS — 5 USERS MIXED LENGTHS ==========\n");
 
     struct StressCase {
@@ -869,7 +759,7 @@ static void test_stress_mixed_lengths(InferenceEngine& engine) {
 ///   5d. Zero max_new_tokens — request with no generation budget.
 ///   5e. Mixed finish times — one request finishes early, others continue.
 ///   5f. Scheduler with finished-then-new request — add, finish, add again.
-static void test_edge_cases(InferenceEngine& engine) {
+static void test_edge_cases(EngineServer& engine) {
     printf("\n========== TEST 5: EDGE CASES ==========\n");
 
     // --- 5a: Empty batch ---
@@ -1098,8 +988,11 @@ int main(int argc, char** argv) {
         load_model_info(model_dir);
 
         // Create engine once — KV cache pools are allocated in the constructor.
-        printf("\n>>> Initializing InferenceEngine...\n");
-        InferenceEngine engine(model_dir);
+        printf("\n>>> Initializing EngineServer...\n");
+        EngineServer engine(model_dir, /*max_seq_len=*/0, /*max_batch_tokens=*/256,
+                            /*kv_cache_mb=*/0,
+                            lightllm::kv_cache::prefix_cache_policy_from_env(),
+                            /*use_fp16=*/false);
 
         printf("Engine D=%d, layers=%d, vocab=%d\n",
                g_model.hidden_dim,

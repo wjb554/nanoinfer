@@ -156,75 +156,6 @@ struct RequestState {
 // ============================================================================
 // GenerateParams / GenerateResult  (unchanged from original — single-request API)
 // ============================================================================
-struct GenerateParams {
-    int max_new_tokens = 64;
-    int eos_token_id   = 151643;   // Qwen EOS
-    float temperature  = 1.0f;
-    int top_k          = 0;        // 0 = greedy
-    float top_p        = 1.0f;     // 1.0 = disabled
-    int seed           = 42;
-};
-
-struct GenerateResult {
-    std::vector<int> token_ids;
-    std::string text;
-};
-
-// ============================================================================
-// InferenceEngine — single-request generation API (backward compatible)
-// ============================================================================
-class InferenceEngine {
-public:
-    /// Load model from safetensors + config.
-    /// @param model_dir   path to directory with config.json + model.safetensors
-    /// @param max_seq_len override max sequence length (0 = use config value)
-    InferenceEngine(const std::string& model_dir, int max_seq_len = 0);
-
-    /// Generate tokens from prompt token IDs (single request, no batching yet).
-    GenerateResult generate(const std::vector<int>& prompt_ids,
-                            const GenerateParams& params = {});
-
-    /// Tokenizer helpers (unchanged).
-    std::vector<int> tokenize(const std::string& text) const;
-    std::string detokenize(const std::vector<int>& ids) const;
-
-private:
-    // ---- Model geometry ----
-    model::ModelConfig cfg_;
-    int D_, Hq_, Hkv_, hd_, n_layers_, vocab_;
-
-    // ---- Model weights (FP32 on GPU) ----
-    Tensor embed_w_, final_norm_;
-    struct LayerW { Tensor q,k,v,o,a_n,gate,up,down,m_n; };
-    std::vector<std::unique_ptr<LayerW>> layers_;
-
-    // ---- Paged KV Cache ----
-    static constexpr int BLOCK_SIZE = 16;
-    int max_seq_len_;
-    int num_blocks_;
-    std::vector<std::unique_ptr<kv_cache::BlockAllocator>> kv_allocators_;
-
-    // ---- Tokenizer data (unchanged) ----
-    std::vector<std::string> tok_vocab_;
-    void load_vocab(const std::string& path);
-
-    // ---- Helpers ----
-    int allocate_block(uint64_t token_hash = 0);
-    void release_block(int block_id);
-
-    void scatter_prefill_kv(int layer,
-                            const Tensor& k_contig,  // [P, Hkv, hd]
-                            const Tensor& v_contig,  // [P, Hkv, hd]
-                            int n_tokens,
-                            const kv_cache::BlockTable& bt);
-
-    void write_decode_kv(int layer,
-                         int token_pos,         // absolute position in sequence
-                         const Tensor& k_new,   // [1, Hkv, hd]
-                         const Tensor& v_new,   // [1, Hkv, hd]
-                         const kv_cache::BlockTable& bt);
-};
-
 // ============================================================================
 // SpeculativeDecodeConfig
 // ============================================================================
@@ -326,7 +257,7 @@ public:
     /// @return SampledToken for each decode entry.  Prefill entries produce NO
     ///         output tokens from this call — they only update internal state.
     std::vector<SampledToken> step(
-        const ScheduleStep& step,
+        ScheduleStep step,   // by value: step() may filter out entries that lack KV blocks
         std::unordered_map<int, std::unique_ptr<RequestState>>& states);
 
     /// Speculative decoding orchestrator: draft + verify + accept for every
@@ -458,7 +389,10 @@ public:
     }
 
     /// Per-layer weight bundle (exposed for testing).
-    struct EngineLayerW { Tensor q,k,v,o,a_n,gate,up,down,m_n; };
+    struct EngineLayerW {
+        Tensor q,k,v,o,a_n,gate,up,down,m_n;
+        Tensor qb,kb,vb;   // attention projection biases (Qwen2 keeps them)
+    };
 
     /// Access the weights for a given layer (0-based).
     const EngineLayerW& layer_weights(int layer) const {
@@ -468,11 +402,20 @@ public:
     /// Access RoPE theta from model config (for testing).
     float rope_theta() const { return cfg_.rope_theta; }
 
+    /// LM-head weight: a separate `lm_head.weight` when the model is NOT
+    /// weight-tied (Qwen2.5-7B has tie_word_embeddings=false), otherwise the
+    /// shared embedding matrix.  Using embed_w_ as the LM head on an untied
+    /// model silently produces garbage logits.
+    const Tensor& lm_head_weight() const {
+        return lm_head_w_.defined() ? lm_head_w_ : embed_w_;
+    }
+
 private:
     model::ModelConfig cfg_;
     int D_, Hq_, Hkv_, hd_, n_layers_, vocab_;
 
     Tensor embed_w_, final_norm_;
+    Tensor lm_head_w_;  // separate LM head for untied models (tie_word_embeddings=false)
     std::vector<std::unique_ptr<EngineLayerW>> layers_;
 
     int max_seq_len_;

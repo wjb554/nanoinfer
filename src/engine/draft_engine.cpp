@@ -15,6 +15,8 @@
 #include "lightllm/ops/sampling.h"
 
 #include <cuda_runtime.h>
+#include <cmath>
+#include <cstdio>
 #include <random>
 
 namespace lightllm {
@@ -78,7 +80,6 @@ void SelfSpecDraftEngine::sync(RequestState& state) {
         fprintf(stderr, "SelfSpecDraftEngine: KV exhausted during sync (need %d)\n", L);
         return;
     }
-
     // Copy the target's AUTHORITATIVE K/V for positions [start, L) and layers
     // 0..M-1 into the draft's own cache.  The draft IS the target's first M
     // layers, so its history cache must contain exactly what the target sees.
@@ -130,7 +131,7 @@ std::vector<int> SelfSpecDraftEngine::draft(RequestState& state, int k, bool sam
                                           state.draft_block_tables, alloc_ptrs_,
                                           /*write_kv=*/true);
         Tensor hn = rms_norm(h_out, target_.final_norm_weight(), eps_);
-        Tensor lg = ops::lm_head_logits(hn, target_.embed_weight());
+        Tensor lg = ops::lm_head_logits(hn, target_.lm_head_weight());
 
         int pred;
         if (sample) {
@@ -139,6 +140,14 @@ std::vector<int> SelfSpecDraftEngine::draft(RequestState& state, int k, bool sam
             std::vector<float> pd(vocab);
             lg.copy_to(pd.data(), vocab * sizeof(float));
             detail::softmax_inplace(pd.data(), vocab);
+            {
+                bool nonfinite = false;
+                for (int v = 0; v < vocab; v++)
+                    if (!std::isfinite(pd[v])) { nonfinite = true; break; }
+                if (nonfinite)
+                    fprintf(stderr, "DRAFT pd NON-FINITE at pos=%d (M=%d)\n",
+                            pos, M_);
+            }
             pred = detail::multinomial_draw(pd.data(), vocab, rng);
             if (probs) probs->insert(probs->end(), pd.begin(), pd.end());
         } else {
@@ -263,7 +272,7 @@ std::vector<int> DualModelDraftEngine::draft(RequestState& state, int k, bool sa
                                                state.draft_block_tables, pos, pos);
         Tensor hn = ops::rms_norm(h_out, draft_->final_norm_weight(),
                                   draft_->rms_norm_eps());
-        Tensor lg = ops::lm_head_logits(hn, draft_->embed_weight());
+        Tensor lg = ops::lm_head_logits(hn, draft_->lm_head_weight());
 
         int pred;
         if (sample) {

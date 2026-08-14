@@ -72,7 +72,6 @@ set(LIGHTLLM_SOURCES
     src/kv_cache/paged_attention.cu
     src/server/http_server.cpp
     src/engine/scheduler.cpp
-    src/engine/engine_paged.cpp
     src/engine/engine_server.cpp
     src/engine/draft_engine.cpp
     src/engine/batch_loop.cpp
@@ -110,8 +109,7 @@ set(LIGHTLLM_HEADERS
     include/lightllm/engine/batch_loop.h
 )
 
-# engine_paged.cpp + engine_server.cpp contain inline CUDA kernels — compile with nvcc
-set_source_files_properties(src/engine/engine_paged.cpp PROPERTIES LANGUAGE CUDA)
+# engine_server.cpp + draft_engine.cpp contain inline CUDA kernels — compile with nvcc
 set_source_files_properties(src/engine/engine_server.cpp PROPERTIES LANGUAGE CUDA)
 set_source_files_properties(src/engine/draft_engine.cpp PROPERTIES LANGUAGE CUDA)
 
@@ -186,6 +184,18 @@ set_target_properties(bench_throughput PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 add_executable(bench_fp16 tools/bench_fp16.cpp)
 target_link_libraries(bench_fp16 PRIVATE lightllm CUDA::cudart CUDA::cublas)
 target_include_directories(bench_fp16 PRIVATE include)
+
+add_executable(bench_structured tools/bench_structured.cpp)
+target_link_libraries(bench_structured PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_include_directories(bench_structured PRIVATE include)
+
+add_executable(quick_generate tools/quick_generate.cpp)
+target_link_libraries(quick_generate PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_include_directories(quick_generate PRIVATE include)
+
+add_executable(dump_weight tools/dump_weight.cpp)
+target_link_libraries(dump_weight PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_include_directories(dump_weight PRIVATE include)
 
 add_executable(bench_concurrency tools/bench_concurrency.cpp)
 target_link_libraries(bench_concurrency PRIVATE lightllm CUDA::cudart CUDA::cublas)

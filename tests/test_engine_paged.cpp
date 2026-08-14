@@ -1,6 +1,6 @@
 /// Comprehensive PagedAttention engine integration test.
 ///
-/// Demonstrates the new InferenceEngine design where:
+/// Demonstrates the paged-attention engine design (now EngineServer) where:
 ///   - N BlockAllocators (one per layer) own K/V GPU pools allocated once
 ///   - BlockTable maps logical-to-physical blocks per request
 ///   - Prefill: attention on contiguous Q/K/V, then scatter K/V into blocks
@@ -98,12 +98,12 @@ static void cuda_check(const char* context) {
 // ============================================================================
 // PAGED ATTENTION ENGINE — full generation pipeline
 //
-// This is the reference implementation of InferenceEngine::generate() as
+// This is the reference implementation of the paged generate() path as
 // described in the design pseudocode.  It is self-contained and does NOT
 // depend on the old engine.cpp (which uses CPU attention + contiguous cache).
 // ============================================================================
 
-/// Per-layer weight structure (same shape as InferenceEngine::LayerW).
+/// Per-layer weight structure (same shape as EngineServer::EngineLayerW).
 struct LayerWeights {
     Tensor q, k, v, o;          // attention projections
     Tensor a_n, m_n;            // RMSNorm weights
@@ -131,7 +131,7 @@ struct GenResult {
 ///   - Model weights (FP32 on GPU)
 ///   - Per-layer BlockAllocators with pre-allocated K/V pools
 ///
-/// This matches the constructor of the new InferenceEngine design:
+/// This matches the constructor of EngineServer:
 ///   "All allocations happen once in the constructor (per engine instance),
 ///    NOT per generate() call."
 struct PagedEngineState {
@@ -1012,7 +1012,7 @@ int main(int argc, char** argv) {
 
     try {
         // Create engine once — KV pools are allocated in the constructor.
-        // This matches the new InferenceEngine design where allocations
+        // This matches the EngineServer design where allocations
         // happen ONCE, not per generate() call.
         printf("\n>>> Initializing PagedEngineState...\n");
         PagedEngineState engine(model_dir, 0);

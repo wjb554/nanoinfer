@@ -399,8 +399,7 @@ EngineServer::EngineServer(const std::string& model_dir,
     char buf[512];
     snprintf(buf, sizeof(buf), "%s/config.json", model_dir.c_str());
     cfg_ = parse_config(buf);
-    snprintf(buf, sizeof(buf), "%s/model.safetensors", model_dir.c_str());
-    SafetensorsLoader loader(buf);
+    SafetensorsLoader loader = SafetensorsLoader::from_dir(model_dir);
 
     D_   = cfg_.hidden_size;
     Hq_  = cfg_.num_attention_heads;
@@ -435,6 +434,15 @@ EngineServer::EngineServer(const std::string& model_dir,
 
     embed_w_    = load_weight(loader, "model.embed_tokens.weight", use_fp16);
     final_norm_ = load_weight(loader, "model.norm.weight", use_fp16);
+    // Untied models (e.g. Qwen2.5-7B, tie_word_embeddings=false) have a
+    // SEPARATE lm_head.weight that must be used for the final logits
+    // projection.  Tied models share embed_tokens as the LM head.
+    if (!cfg_.tie_word_embeddings) {
+        lm_head_w_ = load_weight(loader, "lm_head.weight", use_fp16);
+        printf("  lm_head loaded (untied weights, tie_word_embeddings=false)\n");
+    } else {
+        printf("  lm_head tied to embed_tokens (tie_word_embeddings=true)\n");
+    }
     for (int i = 0; i < n_layers_; i++) {
         auto ns = std::to_string(i);
         layers_.push_back(std::make_unique<EngineLayerW>(EngineLayerW{
@@ -447,6 +455,12 @@ EngineServer::EngineServer(const std::string& model_dir,
             load_weight(loader, "model.layers."+ns+".mlp.up_proj.weight", use_fp16),
             load_weight(loader, "model.layers."+ns+".mlp.down_proj.weight", use_fp16),
             load_weight(loader, "model.layers."+ns+".post_attention_layernorm.weight", use_fp16),
+            // Attention projection biases — Qwen2 keeps them; the GEMM outputs
+            // are always F32 so the biases are stored F32 regardless of
+            // use_fp16.  (Missing these biases corrupts q/k/v entirely.)
+            load_f32(loader, "model.layers."+ns+".self_attn.q_proj.bias"),
+            load_f32(loader, "model.layers."+ns+".self_attn.k_proj.bias"),
+            load_f32(loader, "model.layers."+ns+".self_attn.v_proj.bias"),
         }));
         if (i == 0 || i == n_layers_ - 1)
             printf("  layer %d loaded\n", i);
@@ -485,6 +499,7 @@ EngineServer::EngineServer(const std::string& model_dir,
             };
             add_w(embed_w_);
             add_w(final_norm_);
+            add_w(lm_head_w_);  // untied models carry a separate LM head
             for (auto& L : layers_) {
                 add_w(L->q); add_w(L->k); add_w(L->v); add_w(L->o);
                 add_w(L->a_n); add_w(L->gate); add_w(L->up); add_w(L->down);
@@ -508,7 +523,15 @@ EngineServer::EngineServer(const std::string& model_dir,
         int64_t blocks_by_mem = static_cast<int64_t>(per_layer_pool / block_bytes);
         int64_t blocks_by_len =
             (static_cast<int64_t>(max_seq_len_) + BLOCK_SIZE - 1) / BLOCK_SIZE + 8;
-        int64_t chosen = (std::min)(blocks_by_len, blocks_by_mem);
+        // Default: pool sized to hold one full max_seq_len sequence, clamped by
+        // what the GPU can actually hold.  When the caller EXPLICITLY requests a
+        // KV budget (kv_cache_mb_ > 0), honor it fully — otherwise a large
+        // explicit budget for high-concurrency loads still gets truncated to
+        // one sequence's worth of blocks (e.g. 2056 blocks on a 24 GB card,
+        // wasting most of the ~18 GB the GPU could dedicate to KV).
+        int64_t chosen = (kv_cache_mb_ > 0)
+                             ? blocks_by_mem
+                             : (std::min)(blocks_by_len, blocks_by_mem);
         if (chosen < 1) chosen = 1;
         if (chosen != num_blocks_) {
             num_blocks_ = static_cast<int>(chosen);
@@ -768,11 +791,12 @@ void EngineServer::write_decode_kv(
     // a caller failed to ensure blocks), writing would read a garbage physical
     // id and cudaMemcpy to a wild pointer (SIGSEGV).  Skip gracefully instead.
     if (blk_idx < 0 || blk_idx >= static_cast<int>(block_tables[layer].size())) {
-        fprintf(stderr,
-                "FATAL: write_decode_kv block OOB layer=%d pos=%d blk=%d/%zu "
-                "(KV pool exhausted — skipping write)\n",
-                layer, token_pos, blk_idx, block_tables[layer].size());
-        return;
+        // Unreachable when block tables are sized correctly (including the
+        // spec-decode correction write at L+n).  Fail loudly rather than
+        // writing K/V into a missing block (which corrupts logits / crashes).
+        throw std::runtime_error(
+            "KV pool exhausted during KV write (block table too short for "
+            "position " + std::to_string(token_pos) + ")");
     }
     int phys    = block_tables[layer][blk_idx];
     size_t row_bytes = static_cast<size_t>(Hkv_) * hd_ * sizeof(float);
@@ -903,6 +927,7 @@ Tensor EngineServer::run_layers(
     cudaMemcpy(h.raw(), hidden.raw(), static_cast<size_t>(T) * h_row_bytes,
                cudaMemcpyDeviceToDevice);
 
+
     // Row i attends to positions 0..start_pos+i-1 (decode convention).
     std::vector<int> seq_lens(T);
     for (int i = 0; i < T; i++) seq_lens[i] = start_pos + i;
@@ -926,6 +951,10 @@ Tensor EngineServer::run_layers(
             k = gemm(normed, L.k, true);
             v = gemm(normed, L.v, true);
         }
+        // Qwen2 keeps attention-projection biases (see EngineLayerW).
+        ops::add_bias_inplace(q, L.qb);
+        ops::add_bias_inplace(k, L.kb);
+        ops::add_bias_inplace(v, L.vb);
         q.reshape_inplace({T, Hq_, hd_});
         k.reshape_inplace({T, Hkv_, hd_});
         v.reshape_inplace({T, Hkv_, hd_});
@@ -1164,12 +1193,20 @@ void EngineServer::speculate(
         verify_input.push_back(state.generated_tokens.back());
         for (int i = 0; i < n - 1; i++) verify_input.push_back(drafts[i]);
 
-        // Ensure the target block table covers positions L..L+n-1.
+        // Ensure the target block table covers positions L..L+n.  The verify
+        // writes L..L+n-1, and a rejected last draft writes its correction at
+        // L+j+1 which can reach L+n — one beyond the verify range.  Failing to
+        // cover L+n writes K/V into a missing block (OOB / garbage logits).
         {
-            int blocks_needed = (L + n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            int blocks_needed = (L + n + BLOCK_SIZE) / BLOCK_SIZE;
             while (static_cast<int>(state.block_tables[0].size()) < blocks_needed) {
                 int bid = kv_allocators_[0]->allocate(0);
-                if (bid < 0) break;
+                if (bid < 0) {
+                    // Unreachable with a properly-sized pool; fail loudly
+                    // instead of corrupting the block table.
+                    throw std::runtime_error(
+                        "KV pool exhausted during spec verify pre-alloc");
+                }
                 for (int l = 1; l < n_layers_; l++) kv_allocators_[l]->allocate(0);
                 for (int l = 0; l < n_layers_; l++) state.block_tables[l].append(bid);
             }
@@ -1212,7 +1249,7 @@ void EngineServer::speculate(
                        static_cast<const char*>(h_out.raw()) + j * rb,
                        rb, cudaMemcpyDeviceToDevice);
             Tensor hn = rms_norm(h_pos, final_norm_, cfg_.rms_norm_eps);
-            Tensor lg = ops::lm_head_logits(hn, embed_w_);
+            Tensor lg = ops::lm_head_logits(hn, lm_head_weight());
 
             // Grammar: re-fill the mask at the CURRENT FSM state (updated by
             // AcceptToken for each previously-accepted draft).
@@ -1348,7 +1385,7 @@ void EngineServer::speculate(
 // ============================================================================
 
 std::vector<SampledToken> EngineServer::step(
-    const ScheduleStep& step,
+    ScheduleStep step,
     std::unordered_map<int, std::unique_ptr<RequestState>>& states)
 {
     std::vector<SampledToken> results;
@@ -1356,7 +1393,77 @@ std::vector<SampledToken> EngineServer::step(
     if (step.empty()) return results;
 
     // ------------------------------------------------------------------
-    // 0.  SPLIT ENTRIES
+    // 0.  KV CAPACITY PRE-FILTER  (graceful backpressure instead of crash)
+    // ------------------------------------------------------------------
+    // Compute how many NEW KV blocks this step's entries will allocate and
+    // defer any entry that can't be satisfied.  Previously an allocation
+    // failure left a request with an incomplete block table, then the batched
+    // forward wrote K/V into missing blocks -> illegal memory access (crash).
+    // Now such a request simply waits a step until running requests finish and
+    // free blocks.  Deferred requests have their state untouched, so the
+    // scheduler re-schedules them next step.  Decode (in-flight) is reserved
+    // first; new prefill (admission) waits last.
+    {
+        int free_blk = kv_allocators_[0]->num_free();
+        std::unordered_map<int, int> pf_tokens_in_step;
+        std::vector<bool> deferred(step.entries.size(), false);
+
+        // Conservative new-blocks needed by a prefill entry this step.
+        auto prefill_need = [&](const ScheduleEntry& e, RequestState& st) {
+            int prev = pf_tokens_in_step[e.request_idx];
+            int final_len = st.num_cached_tokens + st.num_prefilled
+                          + prev + e.num_tokens;
+            int owned = st.block_tables.empty() ? 0
+                       : static_cast<int>(st.block_tables[0].size());
+            int need = (final_len + BLOCK_SIZE - 1) / BLOCK_SIZE - owned;
+            return need < 0 ? 0 : need;
+        };
+
+        for (size_t i = 0; i < step.entries.size(); i++) {
+            const auto& e = step.entries[i];
+            auto it = states.find(e.request_idx);
+            if (it == states.end()) continue;
+            auto& st = *it->second;
+
+            int need;
+            if (!e.is_prefill) {
+                // Decode: one new block only when crossing a 16-token boundary.
+                need = (st.seq_len % BLOCK_SIZE == 0) ? 1 : 0;
+                // Speculative decode may pre-allocate ahead for draft tokens.
+                if (spec_cfg_.enabled) {
+                    int future = st.seq_len + spec_cfg_.num_draft_tokens;
+                    int owned = st.block_tables.empty() ? 0
+                               : static_cast<int>(st.block_tables[0].size());
+                    int spec_need = (future + BLOCK_SIZE - 1) / BLOCK_SIZE - owned;
+                    if (spec_need < 0) spec_need = 0;
+                    need = std::max(need, spec_need);
+                }
+            } else {
+                need = prefill_need(e, st);
+            }
+
+            if (need > free_blk) {
+                deferred[i] = true;           // wait for KV to free up
+            } else {
+                free_blk -= need;
+                if (e.is_prefill)
+                    pf_tokens_in_step[e.request_idx] += e.num_tokens;
+            }
+        }
+
+        if (std::any_of(deferred.begin(), deferred.end(),
+                        [](bool b) { return b; })) {
+            std::vector<ScheduleEntry> kept;
+            kept.reserve(step.entries.size());
+            for (size_t i = 0; i < step.entries.size(); i++)
+                if (!deferred[i]) kept.push_back(std::move(step.entries[i]));
+            step.entries = std::move(kept);
+        }
+        if (step.empty()) return results;   // all deferred — caller retries later
+    }
+
+    // ------------------------------------------------------------------
+    // 0b.  SPLIT ENTRIES
     // ------------------------------------------------------------------
     std::vector<int> prefill_indices;
     std::vector<int> decode_indices;
@@ -1425,10 +1532,10 @@ std::vector<SampledToken> EngineServer::step(
                 for (int b = current_blocks; b < blocks_needed; b++) {
                     int block_id = kv_allocators_[0]->allocate(0);
                     if (block_id < 0) {
-                        fprintf(stderr,
-                                "FATAL: KV cache pool exhausted during prefill "
-                                "(req %d, layer 0)\n", req_id);
-                        break;
+                        // Unreachable: step() pre-filters entries by KV capacity.
+                        throw std::runtime_error(
+                            "KV pool exhausted during prefill (should have "
+                            "been deferred by the step() capacity pre-filter)");
                     }
                     for (int l = 1; l < n_layers_; l++) {
                         kv_allocators_[l]->allocate(0);
@@ -1448,10 +1555,10 @@ std::vector<SampledToken> EngineServer::step(
                 for (int b = current_blocks; b < blocks_needed; b++) {
                     int block_id = kv_allocators_[0]->allocate(0);
                     if (block_id < 0) {
-                        fprintf(stderr,
-                                "FATAL: KV cache pool exhausted during prefill "
-                                "(req %d, layer 0)\n", req_id);
-                        break;
+                        // Unreachable: step() pre-filters entries by KV capacity.
+                        throw std::runtime_error(
+                            "KV pool exhausted during prefill (should have "
+                            "been deferred by the step() capacity pre-filter)");
                     }
                     for (int l = 1; l < n_layers_; l++) {
                         kv_allocators_[l]->allocate(0);
@@ -1476,10 +1583,10 @@ std::vector<SampledToken> EngineServer::step(
         if (state.seq_len % BLOCK_SIZE == 0) {
             int block_id = kv_allocators_[0]->allocate(0);
             if (block_id < 0) {
-                fprintf(stderr,
-                        "FATAL: KV cache pool exhausted during decode "
-                        "(req %d)\n", entry.request_idx);
-                continue;
+                // Unreachable: step() pre-filters entries by KV capacity.
+                throw std::runtime_error(
+                    "KV pool exhausted during decode (should have been "
+                    "deferred by the step() capacity pre-filter)");
             }
             for (int l = 1; l < n_layers_; l++) {
                 kv_allocators_[l]->allocate(0);
@@ -1504,7 +1611,13 @@ std::vector<SampledToken> EngineServer::step(
             int blocks_needed = (future_len + BLOCK_SIZE - 1) / BLOCK_SIZE;
             while (static_cast<int>(st.block_tables[0].size()) < blocks_needed) {
                 int bid = kv_allocators_[0]->allocate(0);
-                if (bid < 0) break;
+                if (bid < 0) {
+                    // Unreachable: step() pre-filters entries by KV capacity
+                    // (decode + speculative needs are both reserved there).
+                    throw std::runtime_error(
+                        "KV pool exhausted during spec pre-alloc (should have "
+                        "been deferred by the step() capacity pre-filter)");
+                }
                 for (int l = 1; l < n_layers_; l++) {
                     kv_allocators_[l]->allocate(0);
                 }
@@ -1543,6 +1656,11 @@ std::vector<SampledToken> EngineServer::step(
             k_flat = gemm(normed, L.k, true);  // [T, Hkv*hd]
             v_flat = gemm(normed, L.v, true);  // [T, Hkv*hd]
         }
+        // Qwen2 keeps attention-projection biases; without them q/k/v are
+        // wrong (bias magnitude ~100) and attention output is garbage.
+        ops::add_bias_inplace(q_flat, L.qb);
+        ops::add_bias_inplace(k_flat, L.kb);
+        ops::add_bias_inplace(v_flat, L.vb);
 
         q_flat.reshape_inplace({total_tokens, Hq_, hd_});
         k_flat.reshape_inplace({total_tokens, Hkv_, hd_});
@@ -1934,6 +2052,23 @@ std::vector<SampledToken> EngineServer::step(
         pre_norm_hiddens[it->first] = std::move(h_pre);
     }
 
+    // Also capture PREFILL entries' last-token PRE-norm hidden for the
+    // first-decode pre-sample.  It must be captured here (h is still pre-norm)
+    // because the pre-sample's lm_head path applies the final RMSNorm itself —
+    // copying the post-norm h here caused a DOUBLE final-norm -> garbage logits
+    // -> garbage first token -> garbage generation.
+    for (int idx : prefill_indices) {
+        auto it = states.find(step.entries[idx].request_idx);
+        if (it == states.end()) continue;
+        auto [start, end] = entry_map[idx];
+        size_t rbytes = D_ * dtype_size(weight_dtype_);
+        Tensor h_pre({1, D_}, weight_dtype_, Device::CUDA);
+        cudaMemcpy(h_pre.raw(),
+                   static_cast<const char*>(h.raw()) + (end - 1) * rbytes,
+                   rbytes, cudaMemcpyDeviceToDevice);
+        it->second->next_hidden_state = std::move(h_pre);
+    }
+
     h = rms_norm(h, final_norm_, cfg_.rms_norm_eps);
 
     // Prefill entries: update state (no output tokens)
@@ -1944,15 +2079,8 @@ std::vector<SampledToken> EngineServer::step(
         if (it == states.end()) continue;
         auto& state = *it->second;
 
-        // Store the last token's hidden state for the first decode step
-        size_t row_bytes = D_ * dtype_size(weight_dtype_);
-        Tensor last_h({1, D_}, weight_dtype_, Device::CUDA);
-        cudaMemcpy(last_h.raw(),
-                   static_cast<const char*>(h.raw()) + (end - 1) * row_bytes,
-                   row_bytes,
-                   cudaMemcpyDeviceToDevice);
-
-        state.next_hidden_state = std::move(last_h);
+        // next_hidden_state was already captured (PRE-norm) before the final
+        // RMSNorm — see the prefill capture above.
         state.num_prefilled += entry.num_tokens;
 
         // Pre-sample the first decode token for entries that just completed
@@ -1965,7 +2093,7 @@ std::vector<SampledToken> EngineServer::step(
 
             Tensor h_n = rms_norm(state.next_hidden_state, final_norm_,
                                   cfg_.rms_norm_eps);
-            Tensor lg = ops::lm_head_logits(h_n, embed_w_);
+            Tensor lg = ops::lm_head_logits(h_n, lm_head_weight());
             int first_token;
             if (state.grammar_matcher) {
                 // Apply grammar mask, then argmax.
@@ -2039,7 +2167,7 @@ std::vector<SampledToken> EngineServer::step(
                    cudaMemcpyDeviceToDevice);
 
         // LM head -> logits on GPU
-        Tensor logits_gpu = ops::lm_head_logits(tok_h, embed_w_);
+        Tensor logits_gpu = ops::lm_head_logits(tok_h, lm_head_weight());
         std::vector<float> logits_cpu(vocab_);
         logits_gpu.copy_to(logits_cpu.data(), vocab_ * sizeof(float));
 

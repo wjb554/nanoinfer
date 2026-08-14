@@ -287,7 +287,7 @@ SpeculativeResult speculative_step(
             Tensor h_norm = rms_norm(h_pos,
                                      target.final_norm_weight(),
                                      target.rms_norm_eps());
-            Tensor logits_gpu = lm_head_logits(h_norm, target.embed_weight());
+            Tensor logits_gpu = lm_head_logits(h_norm, target.lm_head_weight());
             int target_token = ops::argmax(logits_gpu);
 
             if (target_token == draft_tokens[j]) {

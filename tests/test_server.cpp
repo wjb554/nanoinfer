@@ -1,11 +1,13 @@
 /// LightLLM HTTP Inference Server — loads model, serves requests.
 /// POST /v1/chat/completions  {"prompt":[ids],"max_tokens":N} → {"tokens":[...]}
+/// Backed by EngineServer + BatchMainLoop (single-threaded handler).
 #include <cstdio>
 #include <vector>
 #include <string>
 #include <cstring>
 #include <chrono>
 #include "lightllm/engine/engine.h"
+#include "lightllm/engine/batch_loop.h"
 #include "lightllm/server/http_server.h"
 
 using namespace lightllm::engine;
@@ -43,7 +45,10 @@ static std::vector<int> json_int_array(const std::string& body,const std::string
 
 int main(){
     printf("=== LightLLM HTTP Server ===\nLoading model...\n");
-    InferenceEngine engine("models/qwen2.5-0.5b");
+    EngineServer engine("models/qwen2.5-0.5b", /*max_seq_len=*/0, /*max_batch_tokens=*/256,
+                        /*kv_cache_mb=*/0, lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        /*use_fp16=*/false);
+    BatchMainLoop loop(engine, SchedulerPolicy::FCFS, /*chunk_size=*/16, /*max_batch_tokens=*/256);
 
     run_server(8080, [&](const HttpRequest& req) -> HttpResponse {
         HttpResponse resp;
@@ -56,15 +61,20 @@ int main(){
 
         printf("Request: %zu prompt tokens, max_tokens=%d\n",prompt.size(),max_tok);
 
-        GenerateParams params;params.max_new_tokens=max_tok;
         auto t0=std::chrono::steady_clock::now();
-        auto result=engine.generate(prompt,params);
+        int id = loop.submit(prompt, max_tok, /*eos*/151643, "", "", /*temperature*/1.0f);
+        loop.run();
+        auto gen = loop.generated_tokens(id);
         auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count();
 
-        int new_tokens=(int)result.token_ids.size()-(int)prompt.size();
+        int new_tokens=(int)gen.size();
         printf("  Generated %d tokens in %lld ms\n",new_tokens,ms);
 
-        auto output=json_array(result.token_ids);
+        // Full sequence = prompt + generated (matches the old generate() contract).
+        std::vector<int> all = prompt;
+        all.insert(all.end(), gen.begin(), gen.end());
+
+        auto output=json_array(all);
         resp.body=json_obj(
             json_key("tokens",output)+","+
             json_key("new_tokens",std::to_string(new_tokens))+","+
