@@ -201,6 +201,10 @@ add_executable(bench_concurrency tools/bench_concurrency.cpp)
 target_link_libraries(bench_concurrency PRIVATE lightllm CUDA::cudart CUDA::cublas)
 target_include_directories(bench_concurrency PRIVATE include)
 
+add_executable(bench_prompt_lengths tools/bench_prompt_lengths.cpp)
+target_link_libraries(bench_prompt_lengths PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_include_directories(bench_prompt_lengths PRIVATE include)
+
 add_lightllm_test(bench_mixed_lengths tools/bench_mixed_lengths.cpp)
 add_lightllm_test(bench_max_users tools/bench_max_users.cpp)
 

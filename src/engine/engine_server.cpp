@@ -1912,12 +1912,34 @@ std::vector<SampledToken> EngineServer::step(
             std::vector<int> lens(N);
 
             for (int j = 0; j < N; j++) {
+                int idx = decode_indices[j];
+                auto [start, end] = entry_map[idx];
                 auto& state = *decode_states[j];
                 auto& bt = state.block_tables[l];
                 for (int b = 0; b < bt.size(); b++) {
                     bt_flat[j * max_blocks_per_seq_ + b] = bt[b];
                 }
-                lens[j] = state.seq_len;
+                // Write the decode token's K/V BEFORE attention so the row's
+                // SELF-attention sees it — matching the batched causal forward
+                // (and numpy).  Writing after attention made the decode hidden
+                // states diverge from the model for hd=128 (second+ generated
+                // tokens wrong; 0.5B/hd=64 only escaped because the argmax
+                // happened not to flip).
+                int token_pos = state.seq_len;
+                int blk_idx = token_pos / BLOCK_SIZE;
+                if (blk_idx < bt.size()) {
+                    Tensor k_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
+                    cudaMemcpy(k_new.raw(), k_ptr + start * Hkv_ * hd_,
+                               Hkv_ * hd_ * sizeof(float), cudaMemcpyDeviceToDevice);
+                    Tensor v_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
+                    cudaMemcpy(v_new.raw(), v_ptr + start * Hkv_ * hd_,
+                               Hkv_ * hd_ * sizeof(float), cudaMemcpyDeviceToDevice);
+                    write_decode_kv(l, token_pos, k_new, v_new,
+                                    state.block_tables, *kv_allocators_[l]);
+                }
+                // Include self-attention: the row's K/V is now at position
+                // seq_len, so attend to [0, seq_len] => seq_len + 1.
+                lens[j] = state.seq_len + 1;
             }
 
             // Copy metadata to GPU pre-allocated tensors
@@ -1934,41 +1956,14 @@ std::vector<SampledToken> EngineServer::step(
                 d_all_seq_lens_.data<int>(),
                 *kv_allocators_[l]);
 
-            // Copy output back to flat tensor and write decode K/V
+            // Copy attention output row j back to the flat tensor
             for (int j = 0; j < N; j++) {
                 int idx = decode_indices[j];
                 auto [start, end] = entry_map[idx];
-                auto& state = *decode_states[j];
-
-                // Copy attention output row j to flat tensor
                 cudaMemcpy(attn_ptr + start * Hq_ * hd_,
                            a_out.data<float>() + j * Hq_ * hd_,
                            Hq_ * hd_ * sizeof(float),
                            cudaMemcpyDeviceToDevice);
-
-                // Write single-token K/V into paged block
-                // (block already allocated in step 1 if seq_len crossed
-                //  boundary; safety-check the block index is valid)
-                int token_pos = state.seq_len;
-                int blk_idx = token_pos / BLOCK_SIZE;
-                if (blk_idx < state.block_tables[l].size()) {
-                    // Extract K_new [1, Hkv, hd] from k_flat
-                    Tensor k_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
-                    cudaMemcpy(k_new.raw(),
-                               k_ptr + start * Hkv_ * hd_,
-                               Hkv_ * hd_ * sizeof(float),
-                               cudaMemcpyDeviceToDevice);
-
-                    // Extract V_new [1, Hkv, hd] from v_flat
-                    Tensor v_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
-                    cudaMemcpy(v_new.raw(),
-                               v_ptr + start * Hkv_ * hd_,
-                               Hkv_ * hd_ * sizeof(float),
-                               cudaMemcpyDeviceToDevice);
-
-                    write_decode_kv(l, token_pos, k_new, v_new,
-                                    state.block_tables, *kv_allocators_[l]);
-                }
             }
         }
 

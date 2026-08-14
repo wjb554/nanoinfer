@@ -25,6 +25,7 @@ int main(int argc, char** argv) {
     const char* model_dir = "models/qwen2.5-0.5b";
     bool use_fp16 = false;
     int  max_new = 32;
+    float temperature = 1.0f;
     int  max_batch_tokens = 0;
     int  single_token = -1;
     std::string prompt = "The capital of France is";
@@ -37,6 +38,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--prompt") && i+1 < argc)  prompt = argv[++i];
         else if (!strcmp(argv[i], "--token") && i+1 < argc)   single_token = std::atoi(argv[++i]);
         else if (!strcmp(argv[i], "--tokens") && i+1 < argc)  tokens_arg = argv[++i];
+        else if (!strcmp(argv[i], "--temp") && i+1 < argc)    temperature = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "--max-batch-tokens") && i+1<argc) max_batch_tokens = std::atoi(argv[++i]);
     }
     if (max_batch_tokens <= 0) max_batch_tokens = default_batch_tokens();
@@ -62,7 +64,7 @@ int main(int argc, char** argv) {
     printf("\n");
 
     BatchMainLoop loop(engine, SchedulerPolicy::FCFS, 16, max_batch_tokens);
-    int id = loop.submit(ptoks, max_new, 151643);
+    int id = loop.submit(ptoks, max_new, 151643, "", "", temperature);
     loop.run();
 
     std::vector<int> out = loop.generated_tokens(id);
