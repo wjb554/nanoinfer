@@ -22,8 +22,13 @@ struct TensorInfo {
 
 class SafetensorsLoader {
 public:
-    /// Open a safetensors file and parse the header.
+    /// Open a single safetensors file and parse the header.
     explicit SafetensorsLoader(const std::string& path);
+
+    /// Open a model directory: auto-detects a single model.safetensors,
+    /// otherwise reads the sharded layout via model.safetensors.index.json
+    /// (Qwen2.5-3B/7B+ are sharded on HF).
+    static SafetensorsLoader from_dir(const std::string& model_dir);
 
     /// Get metadata for a tensor by name.
     const TensorInfo* get_info(const std::string& name) const;
@@ -34,16 +39,22 @@ public:
     /// Load one tensor into a pre-allocated Tensor (must match shape/dtype).
     void load_into(const std::string& name, Tensor& dst) const;
 
-    /// List all tensor names in the file.
+    /// List all tensor names in the file(s).
     std::vector<std::string> tensor_names() const;
 
     /// Number of tensors.
     size_t num_tensors() const { return tensors_.size(); }
 
 private:
+    SafetensorsLoader() = default;  // sharded mode via from_dir
+    void parse_single(const std::string& path);         // one .safetensors file
+    void parse_sharded(const std::string& model_dir);   // index.json + shards
+
     std::string path_;
     std::unordered_map<std::string, TensorInfo> tensors_;
-    size_t data_offset_;  // byte offset to the start of raw data
+    // tensor name -> safetensors file that holds it; file -> data start offset
+    std::unordered_map<std::string, std::string> tensor_file_;
+    std::unordered_map<std::string, uint64_t> file_data_offset_;
 };
 
 }  // namespace model

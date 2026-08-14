@@ -12,6 +12,27 @@ __global__ void add_kernel(T* out, const T* a, const T* b, int N) {
 }
 
 template <typename T>
+__global__ void add_bias_kernel(T* out, const T* bias, int n_tokens, int out_dim) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n_tokens * out_dim) {
+        int j = idx % out_dim;
+        out[idx] = T(float(out[idx]) + float(bias[j]));
+    }
+}
+
+void add_bias_inplace(Tensor& x, const Tensor& bias) {
+    int n_tokens = x.size(0);
+    int out_dim  = x.size(1);
+    if (bias.numel() != static_cast<size_t>(out_dim))
+        throw std::runtime_error("add_bias_inplace: bias dim mismatch");
+    int N = n_tokens * out_dim, block = 256, grid = ceil_div(N, block);
+    DISPATCH_FLOAT_TYPES(x.dtype(), "add_bias", {
+        add_bias_kernel<scalar_t><<<grid, block>>>(
+            x.data<scalar_t>(), bias.data<scalar_t>(), n_tokens, out_dim);
+    });
+}
+
+template <typename T>
 __global__ void mul_kernel(T* out, const T* a, const T* b, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) out[idx] = a[idx] * b[idx];

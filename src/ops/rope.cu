@@ -38,13 +38,16 @@ __global__ void rope_kernel(
     int stride_token,
     int stride_head) {
 
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int total_threads = num_tokens * num_heads;
-    if (tid >= total_threads) return;
-
-    int token_idx = tid / num_heads;
-    int head_idx = tid % num_heads;
+    // One BLOCK per (token, head): blockIdx.x indexes the (token, head) pair,
+    // threadIdx.x indexes the element within the head.  (The old mapping
+    // derived (token, head) from the flattened tid and used threadIdx.x as the
+    // element — so each (token, head) got only ONE element rotated and the
+    // other 31/32 were left unrotated, silently corrupting RoPE for any
+    // position > 0.  At position 0 cos=1/sin=0 so the bug was invisible.)
+    int token_idx = blockIdx.x / num_heads;
+    int head_idx   = blockIdx.x % num_heads;
     int half_rotary = rotary_dim / 2;
+    if (token_idx >= num_tokens) return;
 
     T* row = x + token_idx * stride_token + head_idx * stride_head;
     const float* c = cos + token_idx * half_rotary;

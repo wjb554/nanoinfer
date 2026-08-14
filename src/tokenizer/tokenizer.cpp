@@ -195,13 +195,31 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
         tokens.push_back(std::string(b2u + b*4));
     }
 
-    // Step 2: Apply BPE merges in order
-    for (auto& merge : merges_) {
+    // Step 2: Apply BPE merges GREEDILY (HF-style).  At each round merge every
+    // occurrence of the highest-priority (lowest-rank) adjacent pair, then
+    // repeat — because merging a low-rank pair can create a new pair that must
+    // be merged before lower ranks.  A single rank-ordered pass over all merges
+    // is WRONG and produces character-level tokens.
+    auto rank_of = [&](const std::string& a, const std::string& b) {
+        for (size_t r = 0; r < merges_.size(); r++)
+            if (merges_[r].first == a && merges_[r].second == b)
+                return static_cast<int>(r);
+        return -1;
+    };
+    for (;;) {
+        int best_rank = -1;
+        size_t best_i = 0;
+        for (size_t i = 0; i + 1 < tokens.size(); i++) {
+            int r = rank_of(tokens[i], tokens[i + 1]);
+            if (r >= 0 && (best_rank < 0 || r < best_rank)) { best_rank = r; best_i = i; }
+        }
+        if (best_rank < 0) break;  // nothing mergeable
         std::vector<std::string> new_tokens;
         for (size_t i = 0; i < tokens.size(); i++) {
-            if (i + 1 < tokens.size() && tokens[i] == merge.first && tokens[i+1] == merge.second) {
-                new_tokens.push_back(merge.first + merge.second);
-                i++; // skip next token
+            if (i + 1 < tokens.size()
+                && rank_of(tokens[i], tokens[i + 1]) == best_rank) {
+                new_tokens.push_back(tokens[i] + tokens[i + 1]);
+                i++;  // consume the pair
             } else {
                 new_tokens.push_back(tokens[i]);
             }

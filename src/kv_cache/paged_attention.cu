@@ -1366,6 +1366,19 @@ void first_prefill_attn_batched_gpu_dispatch(
     int rounded_B_r = ((B_r + bdim - 1) / bdim) * bdim;
 
     size_t smem = rounded_B_r * D * sizeof(float);
+    // head_dim >= 128 pushes dynamic shared memory past the default 48 KB
+    // (sm_75 allows 64 KB), so the launch fails and the output stays zero.
+    // Opt in to the larger limit for both float and half instantiations.
+    static bool smem_attr_set = false;
+    if (!smem_attr_set) {
+        cudaFuncSetAttribute(
+            first_prefill_attn_batched_kernel<float>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize, 64 * 1024);
+        cudaFuncSetAttribute(
+            first_prefill_attn_batched_kernel<half>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize, 64 * 1024);
+        smem_attr_set = true;
+    }
 
     dim3 grid((P_total + B_r - 1) / B_r, Hq);
 
