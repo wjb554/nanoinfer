@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <numeric>
@@ -18,6 +19,7 @@
 
 #include "lightllm/engine/engine.h"
 #include "lightllm/engine/batch_loop.h"
+#include "bench_common.h"
 
 using namespace lightllm::engine;
 
@@ -46,9 +48,24 @@ static double pct(std::vector<double>& v, double p) {
 // ============================================================================
 
 int main(int argc, char** argv) {
-    double duration_sec  = (argc > 1) ? std::atof(argv[1]) : 60.0;
-    double arrival_rate  = (argc > 2) ? std::atof(argv[2]) : 0.5;
-    int    report_intv   = (argc > 3) ? std::atoi(argv[3]) : 10;
+    // Args: [duration_sec] [arrival_rate] [report_intv]
+    //       [--model <dir>] [--fp16] [--max-batch-tokens N]
+    const char* model_dir = "models/qwen2.5-0.5b";
+    bool use_fp16 = false;
+    int  max_batch_tokens = 0;   // 0 -> auto-derived from GPU memory
+    int  kv_cache_mb  = 0;       // 0 -> auto (seq-len cap); >0 -> explicit pool budget
+    std::vector<std::string> pos;
+    for (int i = 1; i < argc; i++) {
+        if      (!strcmp(argv[i], "--model") && i+1 < argc)          model_dir = argv[++i];
+        else if (!strcmp(argv[i], "--fp16"))                         use_fp16  = true;
+        else if (!strcmp(argv[i], "--max-batch-tokens") && i+1<argc) max_batch_tokens = std::atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--kv-cache-mb") && i+1 < argc)    kv_cache_mb = std::atoi(argv[++i]);
+        else                                                         pos.push_back(argv[i]);
+    }
+    double duration_sec  = (pos.size() > 0) ? std::atof(pos[0].c_str()) : 60.0;
+    double arrival_rate  = (pos.size() > 1) ? std::atof(pos[1].c_str()) : 0.5;
+    int    report_intv   = (pos.size() > 2) ? std::atoi(pos[2].c_str()) : 10;
+    if (max_batch_tokens <= 0) max_batch_tokens = default_batch_tokens();
 
     // --- Prompt templates ---
     std::vector<std::vector<int>> prompts = {
@@ -60,14 +77,14 @@ int main(int argc, char** argv) {
     };
 
     const int CHUNK_SIZE = 16;
-    const int MAX_BATCH_TOKENS = 256;
+    // max_batch_tokens: from --max-batch-tokens, else auto-derived from GPU memory
 
     printf("=============================================================\n");
     printf("  LightLLM — Multi-User Simulation Benchmark (cont. batching)\n");
     printf("  Duration: %.0f s | Arrival: %.2f req/s | Prompt pool: %zu\n",
            duration_sec, arrival_rate, prompts.size());
     printf("  Chunk size: %d | Max batch tokens: %d\n",
-           CHUNK_SIZE, MAX_BATCH_TOKENS);
+           CHUNK_SIZE, max_batch_tokens);
     printf("=============================================================\n\n");
 
     // --- Pre-generate Poisson arrivals ---
@@ -87,12 +104,15 @@ int main(int argc, char** argv) {
     printf("Pre-generated %zu requests\n\n", arrivals.size());
 
     // --- Init engine (batch-capable) ---
-    printf("Loading model...\n");
-    EngineServer engine("models/qwen2.5-0.5b", 0, MAX_BATCH_TOKENS);
+    printf("Loading model... (%s, %s)\n", model_dir,
+           use_fp16 ? "FP16" : "FP32");
+    EngineServer engine(model_dir, 0, max_batch_tokens, kv_cache_mb,
+                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        use_fp16);
 
     // --- Init batch loop ---
     BatchMainLoop batch_loop(engine, SchedulerPolicy::DecodeFirst,
-                             CHUNK_SIZE, MAX_BATCH_TOKENS);
+                             CHUNK_SIZE, max_batch_tokens);
 
     struct TrackedReq {
         int loop_id;

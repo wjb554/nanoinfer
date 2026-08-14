@@ -55,11 +55,15 @@ int main(int argc, char** argv) {
     printf("Target: %s\n", target_dir);
     if (dual_mode) printf("Draft:  %s (dual-model)\n", draft_dir);
     else           printf("Draft:  first %d layers (self-speculation)\n", draft_layers);
-    printf("GPU: RTX 2060 (sm_75)\n\n");
+    printf("GPU: auto (detected at runtime)\n\n");
 
-    // ---- Load target model (max_seq_len=128 for 6GB GPU safety) ----
+    // ---- Load target model ----
+    // max_seq_len=0 -> use config default + auto-size the KV pool from GPU
+    // memory.  (The old hardcoded 128 starved the pool to 16 blocks/layer,
+    // which exhausted during dual-mode speculative pre-allocation -> garbage
+    // target logits -> 0% acceptance.  The draft engine inherits this size.)
     printf("Loading target model...\n");
-    EngineServer target(target_dir, /*max_seq_len=*/128, /*max_batch_tokens=*/256, 0,
+    EngineServer target(target_dir, /*max_seq_len=*/0, /*max_batch_tokens=*/256, 0,
         lightllm::kv_cache::prefix_cache_policy_from_env(),
         /*use_fp16=*/true);
 
@@ -68,6 +72,14 @@ int main(int argc, char** argv) {
         SpeculativeDecodeConfig cfg;
         cfg.enabled = true;
         cfg.draft_model_dir = draft_dir;
+        // Argmax-equality acceptance collapses to ~0% for cross-scale dual
+        // models (0.5B draft rarely matches the 7B target's argmax).  Use
+        // Leviathan probability acceptance min(1, p_target/p_draft) instead.
+        cfg.probability_acceptance = true;
+        // Batch the k-token verify into ONE M=k forward instead of k
+        // single-token passes — amortizes the per-layer weight loads that
+        // otherwise make spec decode net-negative.
+        cfg.verify_batch = true;
         target.enable_speculative_decode(cfg);
     }
 
@@ -119,7 +131,13 @@ int main(int argc, char** argv) {
                     target.clear_kv_cache();
                     BatchMainLoop loop(target, SchedulerPolicy::FCFS, 16, 256);
                     if (!dual_mode) {
-                        loop.enable_speculative_decode(k, "", draft_layers);  // self-spec
+                        // DIAGNOSTIC: self-spec with probability acceptance but
+                        // SEQUENTIAL verify (no batched-verify numeric
+                        // divergence).  Isolates whether the self+prob 0% came
+                        // from the divergence or a probability-path bug.
+                        loop.enable_speculative_decode(k, "", draft_layers,
+                                                       /*verify_batch=*/false,
+                                                       /*probability_acceptance=*/true);
                     } else {
                         target.set_num_draft_tokens(k);     // dual: just update k
                     }

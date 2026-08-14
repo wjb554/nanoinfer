@@ -7,15 +7,18 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <numeric>
 #include <random>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include "lightllm/engine/engine.h"
 #include "lightllm/engine/batch_loop.h"
+#include "bench_common.h"
 
 using namespace lightllm::engine;
 
@@ -31,8 +34,23 @@ static double pct(std::vector<double>& v, double p) {
 }
 
 int main(int argc, char** argv) {
-    double duration_sec  = (argc > 1) ? std::atof(argv[1]) : 60.0;
-    double arrival_rate  = (argc > 2) ? std::atof(argv[2]) : 1.0;
+    // Args: [duration_sec] [arrival_rate]
+    //       [--model <dir>] [--fp16] [--max-batch-tokens N] [--kv-cache-mb N]
+    const char* model_dir = "models/qwen2.5-0.5b";
+    bool use_fp16 = false;
+    int  max_batch_tokens = 0;   // 0 -> auto-derived from GPU memory
+    int  kv_cache_mb  = 0;       // 0 -> auto (seq-len cap); >0 -> explicit pool budget
+    std::vector<std::string> pos;
+    for (int i = 1; i < argc; i++) {
+        if      (!strcmp(argv[i], "--model") && i+1 < argc)          model_dir = argv[++i];
+        else if (!strcmp(argv[i], "--fp16"))                         use_fp16  = true;
+        else if (!strcmp(argv[i], "--max-batch-tokens") && i+1<argc) max_batch_tokens = std::atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--kv-cache-mb") && i+1 < argc)    kv_cache_mb = std::atoi(argv[++i]);
+        else                                                         pos.push_back(argv[i]);
+    }
+    double duration_sec  = (pos.size() > 0) ? std::atof(pos[0].c_str()) : 60.0;
+    double arrival_rate  = (pos.size() > 1) ? std::atof(pos[1].c_str()) : 1.0;
+    if (max_batch_tokens <= 0) max_batch_tokens = default_batch_tokens();
 
     // --- Prompt templates by length category ---
     struct PromptSet {
@@ -59,19 +77,19 @@ int main(int argc, char** argv) {
         {{1339, 315, 220, 285, 315, 24794, 576, 8319, 315, 13466, 374}, 30},
     };
 
-    // --- Memory config ---
-    const int GPU_MB = 6 * 1024;       // RTX 2060 6 GB
-    const int MODEL_MB = 2100;          // 494M params × 4 bytes + overhead
-    const int RESERVED_MB = 500;        // 500 MB headroom
-    const int KV_CACHE_MB = GPU_MB - MODEL_MB - RESERVED_MB;  // ~3500 MB
+    // --- Memory config: KV pool auto-sized by EngineServer to GPU free memory ---
     const int CHUNK_SIZE = 16;
-    const int MAX_BATCH_TOKENS = 512;   // Larger budget for high throughput
+    // max_batch_tokens: from --max-batch-tokens, else auto-derived from GPU memory
 
     printf("=============================================================\n");
     printf("  LightLLM — High-Throughput Simulation\n");
     printf("  Duration: %.0f s | Arrival: %.2f req/s\n", duration_sec, arrival_rate);
-    printf("  GPU: %d MB | Model: %d MB | Reserved: %d MB | KV Cache: %d MB\n",
-           GPU_MB, MODEL_MB, RESERVED_MB, KV_CACHE_MB);
+    printf("  Model: %s | Precision: %s\n", model_dir,
+           use_fp16 ? "FP16" : "FP32");
+    printf("  Max batch tokens: %d\n", max_batch_tokens);
+    printf("  KV cache pool: %s\n", kv_cache_mb > 0
+           ? ("explicit " + std::to_string(kv_cache_mb) + " MB").c_str()
+           : "auto (seq-len cap)");
     printf("  Short/Med/Long ratio: 50%%/35%%/15%%\n");
     printf("=============================================================\n\n");
 
@@ -105,17 +123,19 @@ int main(int argc, char** argv) {
     printf("Pre-generated: %d short + %d med + %d long = %zu total\n\n",
            n_short, n_med, n_long, arrivals.size());
 
-    // --- Init engine with maxed-out KV cache ---
-    printf("Loading model with %d MB KV cache pool...\n", KV_CACHE_MB);
-    EngineServer engine("models/qwen2.5-0.5b", /*max_seq_len=*/0,
-                        MAX_BATCH_TOKENS, KV_CACHE_MB);
+    // --- Init engine with auto-sized KV cache ---
+    printf("Loading model (KV pool auto-sized to GPU free memory)...\n");
+    EngineServer engine(model_dir, /*max_seq_len=*/0,
+                        max_batch_tokens, kv_cache_mb,
+                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        use_fp16);
     printf("KV pool: %d blocks/layer × %d layers = %.0f MB\n",
            engine.num_blocks(), engine.num_layers(),
            (double)engine.num_blocks() * 16 * 2 * 64 * 2 * 4
                * engine.num_layers() / 1048576.0);
 
     BatchMainLoop batch(engine, SchedulerPolicy::DecodeFirst,
-                        CHUNK_SIZE, MAX_BATCH_TOKENS);
+                        CHUNK_SIZE, max_batch_tokens);
 
     struct Tracked { int loop_id; double arrival; int cat; };
     std::vector<Tracked> tracked;

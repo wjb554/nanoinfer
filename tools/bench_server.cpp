@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -31,16 +32,20 @@ using namespace lightllm::engine;
 // ============================================================================
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        fprintf(stderr,
-                "Usage: bench_server <model_dir> [max_seq_len] "
-                "[max_batch_tokens]\n");
-        return 1;
+    // Args: [model_dir] [max_seq_len] [max_batch_tokens] [--model <dir>] [--fp16]
+    std::string model_dir = "models/qwen2.5-0.5b";
+    int  max_seq_len      = 2048;
+    int  max_batch_tokens = 256;
+    bool use_fp16         = false;
+    std::vector<std::string> pos;
+    for (int i = 1; i < argc; i++) {
+        if      (!strcmp(argv[i], "--model") && i+1 < argc) model_dir = argv[++i];
+        else if (!strcmp(argv[i], "--fp16"))                use_fp16  = true;
+        else                                                pos.push_back(argv[i]);
     }
-
-    std::string model_dir = argv[1];
-    int max_seq_len       = (argc >= 3) ? std::atoi(argv[2]) : 2048;
-    int max_batch_tokens  = (argc >= 4) ? std::atoi(argv[3]) : 256;
+    if (pos.size() > 0) model_dir         = pos[0];
+    if (pos.size() > 1) max_seq_len       = std::atoi(pos[1].c_str());
+    if (pos.size() > 2) max_batch_tokens  = std::atoi(pos[2].c_str());
 
     printf("============================================================\n");
     printf("  LightLLM Scheduler-Engine Benchmark\n");
@@ -48,6 +53,7 @@ int main(int argc, char** argv) {
     printf("  Model dir:      %s\n", model_dir.c_str());
     printf("  Max seq len:    %d\n", max_seq_len);
     printf("  Max batch tok:  %d\n", max_batch_tokens);
+    printf("  Precision:      %s\n", use_fp16 ? "FP16 (Tensor Core)" : "FP32");
     printf("  Scheduler:      DecodeFirst (chunk_size=16)\n");
     printf("============================================================\n\n");
 
@@ -55,7 +61,10 @@ int main(int argc, char** argv) {
     // 1.  INITIALIZATION
     // ------------------------------------------------------------------
     printf("[init] Loading model...\n");
-    EngineServer engine(model_dir, max_seq_len, max_batch_tokens);
+    EngineServer engine(model_dir, max_seq_len, max_batch_tokens,
+                        /*kv_cache_mb=*/0,
+                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        use_fp16);
     printf("[init] Model loaded. Hidden dim=%d, vocab=%d, layers=%d\n",
            engine.hidden_dim(), engine.vocab_size(), engine.num_layers());
 

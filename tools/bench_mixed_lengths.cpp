@@ -2,14 +2,29 @@
 /// 6 users with different prompt lengths, Continuous Batching.
 
 #include <cstdio>
+#include <cstring>
 #include <chrono>
+#include <string>
 #include <vector>
 #include "lightllm/engine/engine.h"
 #include "lightllm/engine/batch_loop.h"
+#include "bench_common.h"
 
 using namespace lightllm::engine;
 
-int main() {
+int main(int argc, char** argv) {
+    // Args: [--model <dir>] [--fp16] [--max-batch-tokens N]
+    const char* model_dir = "models/qwen2.5-0.5b";
+    bool use_fp16 = false;
+    int  max_batch_tokens = 0;   // 0 -> auto-derived from GPU memory
+    int  kv_cache_mb  = 0;       // 0 -> auto (seq-len cap); >0 -> explicit pool budget
+    for (int i = 1; i < argc; i++) {
+        if      (!strcmp(argv[i], "--model") && i+1 < argc)          model_dir = argv[++i];
+        else if (!strcmp(argv[i], "--fp16"))                         use_fp16  = true;
+        else if (!strcmp(argv[i], "--max-batch-tokens") && i+1<argc) max_batch_tokens = std::atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--kv-cache-mb") && i+1 < argc)    kv_cache_mb = std::atoi(argv[++i]);
+    }
+    if (max_batch_tokens <= 0) max_batch_tokens = default_batch_tokens();
     printf("=============================================================\n");
     printf("  LightLLM — Multi-User Mixed-Length Test\n");
     printf("  6 users simultaneously, Continuous Batching\n");
@@ -23,9 +38,12 @@ int main() {
         {{100,101,102,103,104,105,106,107,108,109}, 10, "10tok "},
     };
 
-    printf("Loading model...\n"); fflush(stdout);
-    EngineServer engine("models/qwen2.5-0.5b", 0, 256);
-    BatchMainLoop batch(engine, SchedulerPolicy::DecodeFirst, 16, 256);
+    printf("Loading model... (%s, %s, batch=%d)\n", model_dir,
+           use_fp16 ? "FP16" : "FP32", max_batch_tokens); fflush(stdout);
+    EngineServer engine(model_dir, 0, max_batch_tokens, kv_cache_mb,
+                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        use_fp16);
+    BatchMainLoop batch(engine, SchedulerPolicy::DecodeFirst, 16, max_batch_tokens);
     printf("Ready.\n\n"); fflush(stdout);
 
     // Submit all simultaneously

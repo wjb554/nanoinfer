@@ -33,11 +33,16 @@ static Tensor load_f16(SafetensorsLoader& l, const std::string& n) {
     return gpu;
 }
 
-int main() {
+int main(int argc, char** argv) {
+    // Args: [--model <dir>]
+    const char* mdl = "models/qwen2.5-0.5b";
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--model") && i+1 < argc) mdl = argv[++i];
+    }
+
     printf("=== LightLLM fp16 Memory Benchmark ===\n");
     fflush(stdout);
 
-    const char* mdl = "models/qwen2.5-0.5b";
     char buf[512];
 
     snprintf(buf,sizeof(buf),"%s/config.json",mdl);
@@ -46,12 +51,11 @@ int main() {
     printf("Config: D=%d layers=%d\n", D, NL);
     fflush(stdout);
 
-    snprintf(buf,sizeof(buf),"%s/model.safetensors",mdl);
-    printf("Opening: %s\n", buf);
+    printf("Opening: %s\n", mdl);
     fflush(stdout);
-    SafetensorsLoader loader(buf);
+    SafetensorsLoader loader = SafetensorsLoader::from_dir(mdl);
 
-    printf("Loading Qwen2.5-0.5B as fp16...\n");
+    printf("Loading %s as fp16...\n", mdl);
     fflush(stdout);
 
     // Load all weights as fp16
