@@ -1,9 +1,9 @@
 /// Reduction ops — warp-level reduce, top-k CPU baseline.
-#include "lightllm/ops/reduce.h"
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/reduce.h"
+#include "nanoinfer/ops/dispatch.h"
 #include <algorithm>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 template<typename T>
@@ -77,4 +77,4 @@ std::pair<Tensor,Tensor> topk(const Tensor& x, int k){
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

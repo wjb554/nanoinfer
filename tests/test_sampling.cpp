@@ -1,4 +1,4 @@
-/// LightLLM — Comprehensive Sampling Tests
+/// NanoInfer — Comprehensive Sampling Tests
 /// Tests every code path in the new sampling system:
 ///   greedy, temperature, top-k, top-p, min-p, combined, edge cases,
 ///   reproducibility, sample_batch, and detail helpers.
@@ -10,9 +10,9 @@
 #include <algorithm>
 #include <numeric>
 #include <set>
-#include "lightllm/ops/sampling.h"
+#include "nanoinfer/ops/sampling.h"
 
-using namespace lightllm::ops;
+using namespace nanoinfer::ops;
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -991,7 +991,7 @@ static void test_sample_batch() {
 static void test_detail_helpers() {
     printf("[11] Detail helpers\n");
 
-    using namespace lightllm::ops::detail;
+    using namespace nanoinfer::ops::detail;
 
     // --- softmax_inplace ---
     {
@@ -1302,7 +1302,7 @@ static void test_precision() {
 // main
 // =========================================================================
 int main() {
-    printf("LightLLM — Sampling Tests\n");
+    printf("NanoInfer — Sampling Tests\n");
     printf("==========================\n\n");
 
     test_sampling_params();   fflush(stdout);

@@ -8,11 +8,11 @@
 ///
 /// Requires: models/qwen2.5-0.5b/ (Qwen2.5-0.5B-Instruct)
 
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/scheduler.h"
-#include "lightllm/kv_cache/prefix_cache.h"
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/kv_cache/prefix_cache.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 
 #include <algorithm>
 #include <cctype>
@@ -25,7 +25,7 @@
 #include <windows.h>
 #endif
 
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 // ============================================================================
 // Switch console to UTF-8 so decoded text renders correctly on Windows.
@@ -263,7 +263,7 @@ static void run_schema_test(
            m.output_len, m.latency_ms(), m.ttft_ms(), m.tpot_ms());
 
     // Decode output
-    lightllm::tokenizer::Tokenizer tok("models/qwen2.5-0.5b/tokenizer.json");
+    nanoinfer::tokenizer::Tokenizer tok("models/qwen2.5-0.5b/tokenizer.json");
     std::vector<int> gen_tokens;
     for (const auto& t : loop.all_metrics()) {
         if (t.request_id == req_id) {
@@ -290,9 +290,9 @@ int main() {
                         /*max_seq_len=*/0,
                         /*max_batch_tokens=*/256,
                         /*kv_cache_mb=*/0,
-                        lightllm::kv_cache::prefix_cache_policy_from_env());
+                        nanoinfer::kv_cache::prefix_cache_policy_from_env());
 
-    lightllm::tokenizer::Tokenizer tok("models/qwen2.5-0.5b/tokenizer.json");
+    nanoinfer::tokenizer::Tokenizer tok("models/qwen2.5-0.5b/tokenizer.json");
 
     // Common prompt: instruct the model to produce JSON
     // "Output a JSON object with "

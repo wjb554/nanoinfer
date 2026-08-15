@@ -2,12 +2,12 @@
 /// Kernels template on scalar_t (float/half/__nv_bfloat16) but accumulate in float
 /// for numerical stability. The public API dispatches via DISPATCH_FLOAT_TYPES.
 
-#include "lightllm/ops/softmax.h"
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/softmax.h"
+#include "nanoinfer/ops/dispatch.h"
 #include <cuda_runtime.h>
 #include <stdexcept>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 // Kernel 1: compute per-row max, store in row_buf (always float).
@@ -85,4 +85,4 @@ Tensor softmax(const Tensor& x) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-echo === LightLLM Build Started ===
+echo === NanoInfer Build Started ===
 echo.
 
 REM Locate VS
@@ -22,7 +22,7 @@ if %errorlevel% neq 0 (
 echo       OK
 
 echo [2/4] Configuring CMake...
-cd /d "D:\ai infra project\lightllm"
+cd /d "D:\ai infra project\nanoinfer"
 if not exist build mkdir build
 cd build
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release >nul 2>&1

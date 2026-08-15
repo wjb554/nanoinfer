@@ -10,11 +10,11 @@
 /// Example:
 ///   bench_server ../models/Qwen2.5-0.5B-Instruct 2048 256
 
-#include "lightllm/engine/scheduler.h"
-#include "lightllm/engine/engine.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/tensor.h"
-#include "lightllm/model/model_config.h"
+#include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/model/model_config.h"
 
 #include <chrono>
 #include <cstdio>
@@ -25,7 +25,7 @@
 #include <unordered_map>
 #include <vector>
 
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 // ============================================================================
 // main
@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
     if (pos.size() > 2) max_batch_tokens  = std::atoi(pos[2].c_str());
 
     printf("============================================================\n");
-    printf("  LightLLM Scheduler-Engine Benchmark\n");
+    printf("  NanoInfer Scheduler-Engine Benchmark\n");
     printf("============================================================\n");
     printf("  Model dir:      %s\n", model_dir.c_str());
     printf("  Max seq len:    %d\n", max_seq_len);
@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
     printf("[init] Loading model...\n");
     EngineServer engine(model_dir, max_seq_len, max_batch_tokens,
                         /*kv_cache_mb=*/0,
-                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        nanoinfer::kv_cache::prefix_cache_policy_from_env(),
                         use_fp16);
     printf("[init] Model loaded. Hidden dim=%d, vocab=%d, layers=%d\n",
            engine.hidden_dim(), engine.vocab_size(), engine.num_layers());

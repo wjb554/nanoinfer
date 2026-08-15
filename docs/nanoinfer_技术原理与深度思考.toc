@@ -1,0 +1,70 @@
+\contentsline {section}{\numberline {1}项目总览：它是什么}{4}{section.1}%
+\contentsline {subsection}{\numberline {1.1}一句话定位}{4}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}实现的功能清单}{4}{subsection.1.2}%
+\contentsline {subsection}{\numberline {1.3}实测性能概览}{4}{subsection.1.3}%
+\contentsline {subsection}{\numberline {1.4}与主流引擎的关系}{5}{subsection.1.4}%
+\contentsline {section}{\numberline {2}项目总体思维导图}{5}{section.2}%
+\contentsline {section}{\numberline {3}系统架构}{7}{section.3}%
+\contentsline {subsection}{\numberline {3.1}分层结构}{7}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}一次请求的完整生命周期}{7}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}关键设计决策}{7}{subsection.3.3}%
+\contentsline {section}{\numberline {4}Tensor 抽象与内存管理}{8}{section.4}%
+\contentsline {subsection}{\numberline {4.1}设计}{8}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}悬垂指针 Bug：view 自赋值的教训}{8}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}深度思考}{8}{subsection.4.3}%
+\contentsline {section}{\numberline {5}GEMM：五级后端的渐进优化}{9}{section.5}%
+\contentsline {subsection}{\numberline {5.1}各内核原理}{9}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}深度思考}{9}{subsection.5.2}%
+\contentsline {section}{\numberline {6}PagedAttention：分页 KV 缓存与解码内核}{10}{section.6}%
+\contentsline {subsection}{\numberline {6.1}动机：KV 缓存的碎片化问题}{10}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Decode 内核结构}{10}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}三项优化}{11}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}深度思考}{11}{subsection.6.4}%
+\contentsline {section}{\numberline {7}Paged Prefill Attention：分页上的长 prompt 处理}{12}{section.7}%
+\contentsline {subsection}{\numberline {7.1}问题}{12}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}批量首轮 prefill}{12}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}深度思考}{12}{subsection.7.3}%
+\contentsline {section}{\numberline {8}前缀缓存：Hash 与 Radix Tree}{13}{section.8}%
+\contentsline {subsection}{\numberline {8.1}动机}{13}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Hash 模式（vLLM 风格）}{13}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}Radix 模式（SGLang 风格）}{13}{subsection.8.3}%
+\contentsline {subsection}{\numberline {8.4}深度思考}{14}{subsection.8.4}%
+\contentsline {section}{\numberline {9}Continuous Batching 与调度器}{14}{section.9}%
+\contentsline {subsection}{\numberline {9.1}问题}{14}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}三种调度策略}{14}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}深度思考}{15}{subsection.9.3}%
+\contentsline {section}{\numberline {10}EngineServer：异构批次执行引擎}{15}{section.10}%
+\contentsline {subsection}{\numberline {10.1}step() 的完整流程}{15}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}异构批次的数值一致性纪律}{16}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}深度思考}{16}{subsection.10.3}%
+\contentsline {section}{\numberline {11}采样系统}{16}{section.11}%
+\contentsline {subsection}{\numberline {11.1}流水线}{16}{subsection.11.1}%
+\contentsline {subsection}{\numberline {11.2}深度思考}{17}{subsection.11.2}%
+\contentsline {section}{\numberline {12}fp16 混合精度}{17}{section.12}%
+\contentsline {subsection}{\numberline {12.1}策略}{17}{subsection.12.1}%
+\contentsline {subsection}{\numberline {12.2}深度思考}{18}{subsection.12.2}%
+\contentsline {section}{\numberline {13}投机解码（Speculative Decoding）}{18}{section.13}%
+\contentsline {subsection}{\numberline {13.1}原理}{18}{subsection.13.1}%
+\contentsline {subsection}{\numberline {13.2}项目实现}{19}{subsection.13.2}%
+\contentsline {subsection}{\numberline {13.3}实测结论}{19}{subsection.13.3}%
+\contentsline {subsection}{\numberline {13.4}深度思考}{19}{subsection.13.4}%
+\contentsline {section}{\numberline {14}结构化输出（xgrammar 集成）}{19}{section.14}%
+\contentsline {subsection}{\numberline {14.1}原理}{19}{subsection.14.1}%
+\contentsline {subsection}{\numberline {14.2}深度思考}{20}{subsection.14.2}%
+\contentsline {section}{\numberline {15}Tokenizer 与模型加载}{20}{section.15}%
+\contentsline {subsection}{\numberline {15.1}Tokenizer（GPT-2 BPE）}{20}{subsection.15.1}%
+\contentsline {subsection}{\numberline {15.2}模型加载（Safetensors）}{21}{subsection.15.2}%
+\contentsline {section}{\numberline {16}测试与验证体系}{21}{section.16}%
+\contentsline {subsection}{\numberline {16.1}规模与分层}{21}{subsection.16.1}%
+\contentsline {subsection}{\numberline {16.2}方法论}{21}{subsection.16.2}%
+\contentsline {section}{\numberline {17}关键 Bug 案例分析}{21}{section.17}%
+\contentsline {section}{\numberline {18}性能数据}{22}{section.18}%
+\contentsline {section}{\numberline {19}深度思考：推理引擎的技术哲学}{22}{section.19}%
+\contentsline {subsection}{\numberline {19.1}一切性能问题的总纲：Roofline}{22}{subsection.19.1}%
+\contentsline {subsection}{\numberline {19.2}数值一致性是推理引擎的隐形地基}{23}{subsection.19.2}%
+\contentsline {subsection}{\numberline {19.3}显存、算力、延迟的不可能三角}{23}{subsection.19.3}%
+\contentsline {subsection}{\numberline {19.4}从零构建的价值}{23}{subsection.19.4}%
+\contentsline {subsection}{\numberline {19.5}未来方向}{23}{subsection.19.5}%
+\contentsline {section}{\numberline {A}项目文件结构速览}{23}{appendix.A}%
+\contentsline {section}{\numberline {B}关键常量与配置}{24}{appendix.B}%
+\contentsline {section}{\numberline {C}类比速查表}{24}{appendix.C}%

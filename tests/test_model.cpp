@@ -4,12 +4,12 @@
 #include <cstring>
 #include <vector>
 
-#include "lightllm/tensor.h"
-#include "lightllm/model/model_loader.h"
-#include "lightllm/model/model_config.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/model/model_loader.h"
+#include "nanoinfer/model/model_config.h"
 
-using namespace lightllm;
-using namespace lightllm::model;
+using namespace nanoinfer;
+using namespace nanoinfer::model;
 
 static int passed=0,failed=0;
 static void CHECK(const char* n,bool c){if(c)passed++;else{failed++;fprintf(stderr,"  FAIL: %s\n",n);}}

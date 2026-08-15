@@ -2,17 +2,17 @@
 /// All computation in FP32 for numerical stability.
 /// Weights converted from BF16→FP32 at load time.
 
-#include "lightllm/model/transformer_block.h"
+#include "nanoinfer/model/transformer_block.h"
 
 #include <cstdio>
 #include <stdexcept>
 
-#include "lightllm/ops/attention.h"
-#include "lightllm/ops/gemm.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/rope.h"
+#include "nanoinfer/ops/attention.h"
+#include "nanoinfer/ops/gemm.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/rope.h"
 
-namespace lightllm {
+namespace nanoinfer {
 namespace model {
 
 TransformerBlock::TransformerBlock(const BlockWeights& w, const ModelConfig& cfg)
@@ -104,4 +104,4 @@ Tensor TransformerBlock::forward(const Tensor& x, const Tensor& positions,
 }
 
 }  // namespace model
-}  // namespace lightllm
+}  // namespace nanoinfer

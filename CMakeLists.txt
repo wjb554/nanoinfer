@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(LightLLM VERSION 0.1.0 LANGUAGES CXX CUDA)
+project(NanoInfer VERSION 0.1.0 LANGUAGES CXX CUDA)
 
 # Default to Release if not specified (e.g., on first configure).
 if(NOT CMAKE_BUILD_TYPE)
@@ -47,8 +47,8 @@ set(XGRAMMAR_ENABLE_CPPTRACE OFF CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/xgrammar
                  ${CMAKE_BINARY_DIR}/xgrammar)
 
-# --- Library: lightllm ---
-set(LIGHTLLM_SOURCES
+# --- Library: nanoinfer ---
+set(NANOINFER_SOURCES
     src/tensor.cpp
     src/allocator.cpp
     src/ops/elementwise.cu
@@ -79,138 +79,138 @@ set(LIGHTLLM_SOURCES
     src/model/model_config.cpp
 )
 
-set(LIGHTLLM_HEADERS
-    include/lightllm/tensor.h
-    include/lightllm/allocator.h
-    include/lightllm/ops/dispatch.h
-    include/lightllm/ops/elementwise.h
-    include/lightllm/ops/norm.h
-    include/lightllm/ops/rope.h
-    include/lightllm/ops/gemm.h
-    include/lightllm/ops/attention.h
-    include/lightllm/ops/activation.h
-    include/lightllm/ops/unary.h
-    include/lightllm/ops/softmax.h
-    include/lightllm/ops/reduce.h
-    include/lightllm/model/model_loader.h
-    include/lightllm/model/model_config.h
-    include/lightllm/model/transformer_block.h
-    include/lightllm/ops/embedding.h
-    include/lightllm/ops/sampling.h
-    include/lightllm/ops/lm_head.h
-    include/lightllm/kv_cache/prefix_cache.h
-    include/lightllm/kv_cache/block_allocator.h
-    include/lightllm/kv_cache/paged_attention.h
-    include/lightllm/server/http_server.h
-    include/lightllm/engine/scheduler.h
-    include/lightllm/tokenizer/tokenizer.h
-    include/lightllm/engine/engine.h
-    include/lightllm/engine/draft_engine.h
-    include/lightllm/engine/batch_loop.h
+set(NANOINFER_HEADERS
+    include/nanoinfer/tensor.h
+    include/nanoinfer/allocator.h
+    include/nanoinfer/ops/dispatch.h
+    include/nanoinfer/ops/elementwise.h
+    include/nanoinfer/ops/norm.h
+    include/nanoinfer/ops/rope.h
+    include/nanoinfer/ops/gemm.h
+    include/nanoinfer/ops/attention.h
+    include/nanoinfer/ops/activation.h
+    include/nanoinfer/ops/unary.h
+    include/nanoinfer/ops/softmax.h
+    include/nanoinfer/ops/reduce.h
+    include/nanoinfer/model/model_loader.h
+    include/nanoinfer/model/model_config.h
+    include/nanoinfer/model/transformer_block.h
+    include/nanoinfer/ops/embedding.h
+    include/nanoinfer/ops/sampling.h
+    include/nanoinfer/ops/lm_head.h
+    include/nanoinfer/kv_cache/prefix_cache.h
+    include/nanoinfer/kv_cache/block_allocator.h
+    include/nanoinfer/kv_cache/paged_attention.h
+    include/nanoinfer/server/http_server.h
+    include/nanoinfer/engine/scheduler.h
+    include/nanoinfer/tokenizer/tokenizer.h
+    include/nanoinfer/engine/engine.h
+    include/nanoinfer/engine/draft_engine.h
+    include/nanoinfer/engine/batch_loop.h
 )
 
 # engine_server.cpp + draft_engine.cpp contain inline CUDA kernels — compile with nvcc
 set_source_files_properties(src/engine/engine_server.cpp PROPERTIES LANGUAGE CUDA)
 set_source_files_properties(src/engine/draft_engine.cpp PROPERTIES LANGUAGE CUDA)
 
-add_library(lightllm STATIC ${LIGHTLLM_SOURCES} ${LIGHTLLM_HEADERS})
-target_include_directories(lightllm PUBLIC include)
-target_link_libraries(lightllm PUBLIC CUDA::cudart CUDA::cublas xgrammar)
+add_library(nanoinfer STATIC ${NANOINFER_SOURCES} ${NANOINFER_HEADERS})
+target_include_directories(nanoinfer PUBLIC include)
+target_link_libraries(nanoinfer PUBLIC CUDA::cudart CUDA::cublas xgrammar)
 
 # Windows: link winsock for HTTP server
 if(WIN32)
-    target_link_libraries(lightllm PUBLIC ws2_32)
+    target_link_libraries(nanoinfer PUBLIC ws2_32)
 endif()
 
 # --- Tests ---
-function(add_lightllm_test test_name test_source)
+function(add_nanoinfer_test test_name test_source)
     add_executable(${test_name} ${test_source})
-    target_link_libraries(${test_name} PRIVATE lightllm CUDA::cudart CUDA::cublas)
+    target_link_libraries(${test_name} PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
     target_include_directories(${test_name} PRIVATE include)
     set_target_properties(${test_name} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
     add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
 
-add_lightllm_test(test_tensor tests/test_tensor.cpp)
-add_lightllm_test(test_fp16 tests/test_fp16.cpp)
-add_lightllm_test(test_ops tests/test_ops.cu)
-add_lightllm_test(test_quality tests/test_quality.cu)
-add_lightllm_test(test_model tests/test_model.cpp)
-add_lightllm_test(test_e2e tests/test_e2e.cpp)
-add_lightllm_test(test_full_model tests/test_full_model.cpp)
-add_lightllm_test(test_paged_attention tests/test_paged_attention.cu)
-add_lightllm_test(test_attention_fp16 tests/test_attention_fp16.cpp)
-add_lightllm_test(test_paged_attention_v2 tests/test_paged_attention_v2.cu)
-add_lightllm_test(test_paged_prefill tests/test_paged_prefill.cu)
-add_lightllm_test(test_paged_model tests/test_paged_model.cpp)
-add_lightllm_test(test_generate tests/test_generate.cu)
-add_lightllm_test(test_sampling tests/test_sampling.cpp)
-add_lightllm_test(test_structured_output tests/test_structured_output.cpp)
-add_lightllm_test(test_structured_e2e tests/test_structured_e2e.cpp)
-add_lightllm_test(test_lm_head tests/test_lm_head.cu)
+add_nanoinfer_test(test_tensor tests/test_tensor.cpp)
+add_nanoinfer_test(test_fp16 tests/test_fp16.cpp)
+add_nanoinfer_test(test_ops tests/test_ops.cu)
+add_nanoinfer_test(test_quality tests/test_quality.cu)
+add_nanoinfer_test(test_model tests/test_model.cpp)
+add_nanoinfer_test(test_e2e tests/test_e2e.cpp)
+add_nanoinfer_test(test_full_model tests/test_full_model.cpp)
+add_nanoinfer_test(test_paged_attention tests/test_paged_attention.cu)
+add_nanoinfer_test(test_attention_fp16 tests/test_attention_fp16.cpp)
+add_nanoinfer_test(test_paged_attention_v2 tests/test_paged_attention_v2.cu)
+add_nanoinfer_test(test_paged_prefill tests/test_paged_prefill.cu)
+add_nanoinfer_test(test_paged_model tests/test_paged_model.cpp)
+add_nanoinfer_test(test_generate tests/test_generate.cu)
+add_nanoinfer_test(test_sampling tests/test_sampling.cpp)
+add_nanoinfer_test(test_structured_output tests/test_structured_output.cpp)
+add_nanoinfer_test(test_structured_e2e tests/test_structured_e2e.cpp)
+add_nanoinfer_test(test_lm_head tests/test_lm_head.cu)
 
 # --- Install ---
-install(TARGETS lightllm ARCHIVE DESTINATION lib)
-install(DIRECTORY include/lightllm DESTINATION include)
+install(TARGETS nanoinfer ARCHIVE DESTINATION lib)
+install(DIRECTORY include/nanoinfer DESTINATION include)
 
-add_lightllm_test(test_concurrent tests/test_concurrent.cu)
-add_lightllm_test(test_scheduler tests/test_scheduler.cu)
-add_lightllm_test(test_tokenizer tests/test_tokenizer.cpp)
-add_lightllm_test(test_engine_paged tests/test_engine_paged.cpp)
-add_lightllm_test(test_server_engine tests/test_server_engine.cpp)
-add_lightllm_test(test_batch_loop tests/test_batch_loop.cpp)
-add_lightllm_test(test_prefix_cache tests/test_prefix_cache.cpp)
-add_lightllm_test(test_radix_engine tests/test_radix_engine.cpp)
-add_lightllm_test(test_mixed_users tests/test_mixed_users.cpp)
-add_lightllm_test(test_spec_decode tests/test_spec_decode.cpp)
-add_lightllm_test(test_verify_incremental tests/test_verify_incremental.cpp)
-add_lightllm_test(test_attention_divergence tests/test_attention_divergence.cpp)
+add_nanoinfer_test(test_concurrent tests/test_concurrent.cu)
+add_nanoinfer_test(test_scheduler tests/test_scheduler.cu)
+add_nanoinfer_test(test_tokenizer tests/test_tokenizer.cpp)
+add_nanoinfer_test(test_engine_paged tests/test_engine_paged.cpp)
+add_nanoinfer_test(test_server_engine tests/test_server_engine.cpp)
+add_nanoinfer_test(test_batch_loop tests/test_batch_loop.cpp)
+add_nanoinfer_test(test_prefix_cache tests/test_prefix_cache.cpp)
+add_nanoinfer_test(test_radix_engine tests/test_radix_engine.cpp)
+add_nanoinfer_test(test_mixed_users tests/test_mixed_users.cpp)
+add_nanoinfer_test(test_spec_decode tests/test_spec_decode.cpp)
+add_nanoinfer_test(test_verify_incremental tests/test_verify_incremental.cpp)
+add_nanoinfer_test(test_attention_divergence tests/test_attention_divergence.cpp)
 
 # --- Tools ---
 add_executable(bench_server tools/bench_server.cpp)
-target_link_libraries(bench_server PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(bench_server PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(bench_server PRIVATE include)
 
 add_executable(bench_simulation tools/bench_simulation.cpp)
-target_link_libraries(bench_simulation PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(bench_simulation PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(bench_simulation PRIVATE include)
 set_target_properties(bench_simulation PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
 add_executable(bench_throughput tools/bench_throughput.cpp)
-target_link_libraries(bench_throughput PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(bench_throughput PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(bench_throughput PRIVATE include)
 set_target_properties(bench_throughput PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
 add_executable(bench_fp16 tools/bench_fp16.cpp)
-target_link_libraries(bench_fp16 PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(bench_fp16 PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(bench_fp16 PRIVATE include)
 
 add_executable(bench_structured tools/bench_structured.cpp)
-target_link_libraries(bench_structured PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(bench_structured PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(bench_structured PRIVATE include)
 
 add_executable(quick_generate tools/quick_generate.cpp)
-target_link_libraries(quick_generate PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(quick_generate PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(quick_generate PRIVATE include)
 
 add_executable(dump_weight tools/dump_weight.cpp)
-target_link_libraries(dump_weight PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(dump_weight PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(dump_weight PRIVATE include)
 
 add_executable(bench_concurrency tools/bench_concurrency.cpp)
-target_link_libraries(bench_concurrency PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(bench_concurrency PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(bench_concurrency PRIVATE include)
 
 add_executable(bench_prompt_lengths tools/bench_prompt_lengths.cpp)
-target_link_libraries(bench_prompt_lengths PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(bench_prompt_lengths PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(bench_prompt_lengths PRIVATE include)
 
-add_lightllm_test(bench_mixed_lengths tools/bench_mixed_lengths.cpp)
-add_lightllm_test(bench_max_users tools/bench_max_users.cpp)
+add_nanoinfer_test(bench_mixed_lengths tools/bench_mixed_lengths.cpp)
+add_nanoinfer_test(bench_max_users tools/bench_max_users.cpp)
 
 # Speculative decoding benchmark (inline CUDA kernels -> compile with nvcc)
 add_executable(bench_spec_decode tools/bench_spec_decode.cpp)
-target_link_libraries(bench_spec_decode PRIVATE lightllm CUDA::cudart CUDA::cublas)
+target_link_libraries(bench_spec_decode PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(bench_spec_decode PRIVATE include)
 set_source_files_properties(tools/bench_spec_decode.cpp PROPERTIES LANGUAGE CUDA)
 set_target_properties(bench_spec_decode PROPERTIES CUDA_SEPARABLE_COMPILATION ON)

@@ -1,12 +1,12 @@
 /// RoPE CUDA kernel — Neox-style, one thread block per (token, head).
 /// Also includes a GPU cos/sin kernel to eliminate CPU round-trips.
 
-#include "lightllm/ops/rope.h"
+#include "nanoinfer/ops/rope.h"
 #include <cstdio>
 #include <cuda_runtime.h>
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/dispatch.h"
 
-namespace lightllm { namespace ops {
+namespace nanoinfer { namespace ops {
 // GPU kernel to compute RoPE cos/sin directly on device
 __global__ void rope_cos_sin_kernel(float* cos, float* sin, int num_tokens, int half_dim, float rope_theta){
     int t=blockIdx.x, d=threadIdx.x;
@@ -23,7 +23,7 @@ std::pair<Tensor,Tensor> make_rope_cos_sin(int T,int hd,float theta){
 }
 } }
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 template <typename T>
@@ -97,4 +97,4 @@ void rope(Tensor& q, Tensor* k, const Tensor& cos, const Tensor& sin) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

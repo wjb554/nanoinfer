@@ -1,9 +1,9 @@
-#include "lightllm/tensor.h"
-#include "lightllm/ops/softmax.h"
-#include "lightllm/ops/embedding.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/rope.h"
-#include "lightllm/ops/elementwise.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/ops/softmax.h"
+#include "nanoinfer/ops/embedding.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/rope.h"
+#include "nanoinfer/ops/elementwise.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -12,8 +12,8 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
-using namespace lightllm;
-using namespace lightllm::ops;
+using namespace nanoinfer;
+using namespace nanoinfer::ops;
 
 // ============================================================================
 // Helpers

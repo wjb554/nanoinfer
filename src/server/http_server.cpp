@@ -1,7 +1,7 @@
 /// Minimal HTTP server using Winsock2.
 /// Single-threaded, blocking, JSON-in/JSON-out.
 
-#include "lightllm/server/http_server.h"
+#include "nanoinfer/server/http_server.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -19,7 +19,7 @@
 #include <sstream>
 #include <thread>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace server {
 
 // Parse HTTP request from raw bytes
@@ -82,7 +82,7 @@ void run_server(int port, Handler handler) {
         return;
     }
     listen(sock, 4);
-    printf("LightLLM HTTP server listening on http://localhost:%d\n", port);
+    printf("NanoInfer HTTP server listening on http://localhost:%d\n", port);
     fflush(stdout);
 
     char buf[65536];
@@ -106,4 +106,4 @@ void run_server(int port, Handler handler) {
 }
 
 }  // namespace server
-}  // namespace lightllm
+}  // namespace nanoinfer

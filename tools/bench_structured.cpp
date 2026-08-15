@@ -21,12 +21,12 @@
 #include <string>
 #include <vector>
 
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 #include "bench_common.h"
 
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 static double median(std::vector<double>& v) {
     if (v.empty()) return 0;
@@ -82,11 +82,11 @@ int main(int argc, char** argv) {
     if (max_batch_tokens <= 0) max_batch_tokens = default_batch_tokens();
 
     EngineServer engine(model_dir, /*max_seq_len=*/0, max_batch_tokens, kv_cache_mb,
-                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        nanoinfer::kv_cache::prefix_cache_policy_from_env(),
                         use_fp16);
 
     std::string tok_path = std::string(model_dir) + "/tokenizer.json";
-    lightllm::tokenizer::Tokenizer tok(tok_path);
+    nanoinfer::tokenizer::Tokenizer tok(tok_path);
 
     std::vector<int> prompt = tok.encode(prompt_text);
     int eos = 151643;

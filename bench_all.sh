@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# LightLLM 跨模型吞吐基准（带完整实验日志）
+# NanoInfer 跨模型吞吐基准（带完整实验日志）
 #
 # 用法:
 #   bash bench_all.sh [duration_sec] [arrival_rate] [max_batch_tokens] ["实验目的"] [模型列表] [kv_cache_mb]
@@ -48,7 +48,7 @@ CUDA_VER="$($NVCC --version 2>/dev/null | grep -oE 'release [0-9.]+' | awk '{pri
 # ---- README.txt：实验元数据 ----
 {
   echo "############################################################"
-  echo "# LightLLM 实验日志"
+  echo "# NanoInfer 实验日志"
   echo "# 目的: $PURPOSE"
   echo "# 时间: $(date '+%Y-%m-%d %H:%M:%S %Z')"
   echo "# GPU:  $GPU"

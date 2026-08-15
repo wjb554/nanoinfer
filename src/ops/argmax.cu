@@ -1,11 +1,11 @@
 /// GPU argmax — block-level reduction to find max-index.
 /// Single block (256 threads), strided scan over vocab_size elements.
-#include "lightllm/ops/argmax.h"
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/argmax.h"
+#include "nanoinfer/ops/dispatch.h"
 #include <cuda_runtime.h>
 #include <cfloat>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 template<typename T>
@@ -64,4 +64,4 @@ int argmax(const Tensor& logits) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

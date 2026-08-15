@@ -1,11 +1,11 @@
 /// GEMM — progressive fp32 backends + cuBLAS fp16 (Tensor Core)
-#include "lightllm/ops/gemm.h"
+#include "nanoinfer/ops/gemm.h"
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include <stdexcept>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 GemmBackend g_gemm_backend = GemmBackend::CuBLAS;
@@ -131,4 +131,4 @@ Tensor gemm_f16f32(const Tensor& a, const Tensor& b, bool transpose_b) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

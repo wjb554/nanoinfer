@@ -6,20 +6,20 @@
 /// The draft processes [base, D1, ..., D_{k-1}] at positions L..L+k-1,
 /// predicting D1..Dk at L+1..L+k, and writes the draft's own K/V.
 
-#include "lightllm/engine/draft_engine.h"
-#include "lightllm/engine/engine.h"
-#include "lightllm/ops/embedding.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/lm_head.h"
-#include "lightllm/ops/argmax.h"
-#include "lightllm/ops/sampling.h"
+#include "nanoinfer/engine/draft_engine.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/ops/embedding.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/lm_head.h"
+#include "nanoinfer/ops/argmax.h"
+#include "nanoinfer/ops/sampling.h"
 
 #include <cuda_runtime.h>
 #include <cmath>
 #include <cstdio>
 #include <random>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace engine {
 
 using namespace ops;
@@ -301,4 +301,4 @@ void DualModelDraftEngine::clear_kv_cache() {
 }
 
 }  // namespace engine
-}  // namespace lightllm
+}  // namespace nanoinfer

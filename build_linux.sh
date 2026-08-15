@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# LightLLM — Linux Build Script
+# NanoInfer — Linux Build Script
 # Usage: bash build_linux.sh [gpu_arch]
 #   gpu_arch: 75 (RTX 2060, default), 89 (RTX 4090), 80 (A100), 86 (RTX 3090)
 # ============================================================
@@ -25,7 +25,7 @@ if have nvcc; then
 else
     echo "ERROR: nvcc not found. Install CUDA Toolkit first:"
     echo "  Ubuntu: sudo apt install nvidia-cuda-toolkit"
-    echo "  云服务器 (conda): conda install -n lightllm cuda-toolkit=12.4 -c nvidia"
+    echo "  云服务器 (conda): conda install -n nanoinfer cuda-toolkit=12.4 -c nvidia"
     echo "  Or: https://developer.nvidia.com/cuda-downloads"
 fi
 
@@ -34,7 +34,7 @@ if have gcc; then
     GCC_VER=$(gcc -dumpversion 2>/dev/null | grep -oE '^[0-9]+')
     echo "gcc: ${GCC_VER:-unknown}"
     if [ -n "$CUDA_VER" ] && [ -n "$GCC_VER" ] \
-       && [[ "${CUDA_VER%%.*}" -lt 12 ]] && [ "$GCC_VER" -gt 11 ]; then
+       && [ "${CUDA_VER%%.*}" -lt 12 ] && [ "$GCC_VER" -gt 11 ]; then
         echo "WARNING: CUDA 11.x officially supports GCC <= 11, but GCC ${GCC_VER} found."
         echo "         This may cause nvcc errors. Install gcc-11:"
         echo "         sudo apt install gcc-11 g++-11"

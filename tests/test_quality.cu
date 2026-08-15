@@ -5,15 +5,15 @@
 #include <cmath>
 #include <vector>
 #include <cuda_runtime.h>
-#include "lightllm/tensor.h"
-#include "lightllm/ops/activation.h"
-#include "lightllm/ops/unary.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/rope.h"
-#include "lightllm/ops/gemm.h"
-#include "lightllm/ops/softmax.h"
-#include "lightllm/ops/reduce.h"
-using namespace lightllm; using namespace lightllm::ops;
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/ops/activation.h"
+#include "nanoinfer/ops/unary.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/rope.h"
+#include "nanoinfer/ops/gemm.h"
+#include "nanoinfer/ops/softmax.h"
+#include "nanoinfer/ops/reduce.h"
+using namespace nanoinfer; using namespace nanoinfer::ops;
 
 static int passed=0,failed=0;
 static void CHECK(const char* n,bool c){if(c)passed++;else{failed++;fprintf(stderr,"  FAIL: %s\n",n);}}
@@ -141,7 +141,7 @@ void test_gemm_cross_backend(){
 }
 
 int main(){
-    printf("LightLLM — Quality Test Suite\n");
+    printf("NanoInfer — Quality Test Suite\n");
     printf("==============================\n\n");
 
     test_softmax_sums_to_one();

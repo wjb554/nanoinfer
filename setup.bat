@@ -1,10 +1,10 @@
 @echo off
 REM ============================================================
-REM LightLLM — Windows Environment Setup
+REM NanoInfer — Windows Environment Setup
 REM Run this once before building.
 REM ============================================================
 
-echo === LightLLM Environment Setup ===
+echo === NanoInfer Environment Setup ===
 echo.
 
 REM ---- Step 1: Check CUDA ----

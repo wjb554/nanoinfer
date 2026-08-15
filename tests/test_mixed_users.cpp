@@ -1,4 +1,4 @@
-/// LightLLM — multi-user mixed-length test.
+/// NanoInfer — multi-user mixed-length test.
 /// One BatchMainLoop, all requests submitted, scheduler handles them all.
 
 #include <cstdio>
@@ -6,10 +6,10 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
 
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 static int passed=0, failed=0;
 static void CHECK(const char* n, bool c) {
@@ -22,7 +22,7 @@ static double pct(std::vector<double>& v, double p) {
 
 int main() {
     printf("=============================================================\n");
-    printf("  LightLLM — Multi-User Mixed-Length Test\n");
+    printf("  NanoInfer — Multi-User Mixed-Length Test\n");
     printf("  16 requests, 1-20 token prompts, one scheduler handles all\n");
     printf("=============================================================\n\n");
 

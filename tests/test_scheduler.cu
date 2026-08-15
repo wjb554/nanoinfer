@@ -4,9 +4,9 @@
 #include <vector>
 #include <string>
 #include <chrono>
-#include "lightllm/engine/scheduler.h"
+#include "nanoinfer/engine/scheduler.h"
 
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 static void run_simulation(const char* name, SchedulerPolicy policy, int chunk_size,
                             const std::vector<std::vector<int>>& prompts, int max_new) {

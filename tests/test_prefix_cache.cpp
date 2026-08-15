@@ -1,4 +1,4 @@
-/// LightLLM — Prefix Cache Comprehensive Tests
+/// NanoInfer — Prefix Cache Comprehensive Tests
 ///
 /// Tests the full PrefixCache interface (HashPrefixCache and RadixPrefixCache)
 /// through the abstract PrefixCache* and factory, plus implementation-specific
@@ -25,9 +25,9 @@
 #include <set>
 #include <algorithm>
 
-#include "lightllm/kv_cache/prefix_cache.h"
+#include "nanoinfer/kv_cache/prefix_cache.h"
 
-using namespace lightllm::kv_cache;
+using namespace nanoinfer::kv_cache;
 
 // ============================================================================
 // Test harness — matches project convention
@@ -88,7 +88,7 @@ static void test_factory_and_policy() {
     // Default from env (unset => Hash)
     {
         PrefixCachePolicy p = prefix_cache_policy_from_env();
-        // If LIGHTLLM_PREFIX_CACHE is not set, defaults to Hash
+        // If NANOINFER_PREFIX_CACHE is not set, defaults to Hash
         CHECK("env_default/hash", p == PrefixCachePolicy::Hash);
     }
 
@@ -1142,7 +1142,7 @@ static void test_deep_radix_tree() {
 // main
 // ============================================================================
 int main() {
-    std::printf("LightLLM — Prefix Cache Tests\n");
+    std::printf("NanoInfer — Prefix Cache Tests\n");
     std::printf("==============================\n\n");
 
     test_factory_and_policy();

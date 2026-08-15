@@ -1,4 +1,4 @@
-/// LightLLM — multi-user mixed-length benchmark.
+/// NanoInfer — multi-user mixed-length benchmark.
 /// 6 users with different prompt lengths, Continuous Batching.
 
 #include <cstdio>
@@ -6,11 +6,11 @@
 #include <chrono>
 #include <string>
 #include <vector>
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
 #include "bench_common.h"
 
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 int main(int argc, char** argv) {
     // Args: [--model <dir>] [--fp16] [--max-batch-tokens N]
@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     }
     if (max_batch_tokens <= 0) max_batch_tokens = default_batch_tokens();
     printf("=============================================================\n");
-    printf("  LightLLM — Multi-User Mixed-Length Test\n");
+    printf("  NanoInfer — Multi-User Mixed-Length Test\n");
     printf("  6 users simultaneously, Continuous Batching\n");
     printf("=============================================================\n\n");
 
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
     printf("Loading model... (%s, %s, batch=%d)\n", model_dir,
            use_fp16 ? "FP16" : "FP32", max_batch_tokens); fflush(stdout);
     EngineServer engine(model_dir, 0, max_batch_tokens, kv_cache_mb,
-                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        nanoinfer::kv_cache::prefix_cache_policy_from_env(),
                         use_fp16);
     BatchMainLoop batch(engine, SchedulerPolicy::DecodeFirst, 16, max_batch_tokens);
     printf("Ready.\n\n"); fflush(stdout);

@@ -1,4 +1,4 @@
-/// LightLLM Engine Server — heterogeneous batch execution with PagedAttention.
+/// NanoInfer Engine Server — heterogeneous batch execution with PagedAttention.
 ///
 /// INTEGRATION POINT with Scheduler:
 ///   The Scheduler produces a ScheduleStep (heterogeneous batch of prefill chunks
@@ -21,23 +21,23 @@
 ///   - Decode:               allocate block on boundary crossing, write single-token K/V
 ///   - Finish:               release ALL blocks across ALL layers
 
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/scheduler.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/kv_cache/paged_attention.h"
-#include "lightllm/model/model_config.h"
-#include "lightllm/model/model_loader.h"
-#include "lightllm/tensor.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/rope.h"
-#include "lightllm/ops/gemm.h"
-#include "lightllm/ops/elementwise.h"
-#include "lightllm/ops/sampling.h"
-#include "lightllm/ops/attention.h"
-#include "lightllm/ops/lm_head.h"
-#include "lightllm/ops/embedding.h"
-#include "lightllm/ops/argmax.h"
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/kv_cache/paged_attention.h"
+#include "nanoinfer/model/model_config.h"
+#include "nanoinfer/model/model_loader.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/rope.h"
+#include "nanoinfer/ops/gemm.h"
+#include "nanoinfer/ops/elementwise.h"
+#include "nanoinfer/ops/sampling.h"
+#include "nanoinfer/ops/attention.h"
+#include "nanoinfer/ops/lm_head.h"
+#include "nanoinfer/ops/embedding.h"
+#include "nanoinfer/ops/argmax.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
@@ -57,7 +57,7 @@
 #include <xgrammar/xgrammar.h>
 #include <dlpack/dlpack.h>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace engine {
 
 using namespace model;
@@ -2449,4 +2449,4 @@ bool EngineServer::allocate_decode_blocks(RequestState& state) {
 }
 
 }  // namespace engine
-}  // namespace lightllm
+}  // namespace nanoinfer

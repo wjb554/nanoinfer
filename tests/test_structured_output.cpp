@@ -1,4 +1,4 @@
-#include "lightllm/ops/sampling.h"
+#include "nanoinfer/ops/sampling.h"
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -6,7 +6,7 @@
 #include <set>
 #include <cmath>
 
-using namespace lightllm::ops;
+using namespace nanoinfer::ops;
 
 // ---------------------------------------------------------------------------
 // helpers

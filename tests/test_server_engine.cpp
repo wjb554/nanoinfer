@@ -40,16 +40,16 @@
 
 #include <cuda_runtime.h>
 
-#include "lightllm/tensor.h"
-#include "lightllm/model/model_config.h"
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/scheduler.h"
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/kv_cache/block_allocator.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/model/model_config.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
 
-using namespace lightllm;
-using namespace lightllm::engine;
-using namespace lightllm::model;
+using namespace nanoinfer;
+using namespace nanoinfer::engine;
+using namespace nanoinfer::model;
 
 // ============================================================================
 // Test framework
@@ -978,7 +978,7 @@ int main(int argc, char** argv) {
     if (argc > 1) model_dir = argv[1];
 
     printf("=============================================================\n");
-    printf("  LightLLM — Scheduler-Engine Integration Test\n");
+    printf("  NanoInfer — Scheduler-Engine Integration Test\n");
     printf("  Model: %s\n", model_dir);
     printf("=============================================================\n");
 
@@ -991,7 +991,7 @@ int main(int argc, char** argv) {
         printf("\n>>> Initializing EngineServer...\n");
         EngineServer engine(model_dir, /*max_seq_len=*/0, /*max_batch_tokens=*/256,
                             /*kv_cache_mb=*/0,
-                            lightllm::kv_cache::prefix_cache_policy_from_env(),
+                            nanoinfer::kv_cache::prefix_cache_policy_from_env(),
                             /*use_fp16=*/false);
 
         printf("Engine D=%d, layers=%d, vocab=%d\n",

@@ -1,7 +1,7 @@
 /// Tokenizer test — verify vocab load + decode.
 #include <cstdio>
-#include "lightllm/tokenizer/tokenizer.h"
-using namespace lightllm::tokenizer;
+#include "nanoinfer/tokenizer/tokenizer.h"
+using namespace nanoinfer::tokenizer;
 
 int main(){
     printf("=== Tokenizer Test ===\n");

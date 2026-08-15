@@ -1,9 +1,9 @@
 /// Scheduler implementations — FCFS, PrefillFirst.
-#include "lightllm/engine/scheduler.h"
+#include "nanoinfer/engine/scheduler.h"
 #include <algorithm>
 #include <stdexcept>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace engine {
 
 // ===== Factory ==============================================================
@@ -187,4 +187,4 @@ void PrefillFirstScheduler::finish_request(int req_id) {
 }
 
 }  // namespace engine
-}  // namespace lightllm
+}  // namespace nanoinfer

@@ -1,4 +1,4 @@
-#include "lightllm/tensor.h"
+#include "nanoinfer/tensor.h"
 
 #include <cstdio>
 #include <cstring>
@@ -6,7 +6,7 @@
 
 #include <cuda_runtime.h>
 
-namespace lightllm {
+namespace nanoinfer {
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -194,4 +194,4 @@ std::string Tensor::to_string(int max_elems) const {
     return s;
 }
 
-}  // namespace lightllm
+}  // namespace nanoinfer

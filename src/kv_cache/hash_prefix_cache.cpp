@@ -7,13 +7,13 @@
 /// For typical pool sizes (hundreds of blocks) a linear scan on evict_lru()
 /// is fast enough.
 
-#include "lightllm/kv_cache/prefix_cache.h"
+#include "nanoinfer/kv_cache/prefix_cache.h"
 
 #include <cstdlib>   // std::getenv
 #include <cstring>   // std::strcmp
 #include <stdexcept>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace kv_cache {
 
 // ============================================================================
@@ -240,7 +240,7 @@ int HashPrefixCache::find_by_hash(uint64_t token_hash) const {
 // ============================================================================
 
 PrefixCachePolicy prefix_cache_policy_from_env() {
-    const char* val = std::getenv("LIGHTLLM_PREFIX_CACHE");
+    const char* val = std::getenv("NANOINFER_PREFIX_CACHE");
     if (val == nullptr) {
         return PrefixCachePolicy::Hash;
     }
@@ -260,4 +260,4 @@ const char* prefix_cache_policy_name(PrefixCachePolicy policy) {
 }
 
 }  // namespace kv_cache
-}  // namespace lightllm
+}  // namespace nanoinfer

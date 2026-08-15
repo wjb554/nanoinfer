@@ -1,4 +1,4 @@
-/// LightLLM — throughput vs concurrency (EngineServer + BatchMainLoop).
+/// NanoInfer — throughput vs concurrency (EngineServer + BatchMainLoop).
 /// Measures TWO modes with the SAME engine so the batching benefit is visible:
 ///   Sequential — N requests run one at a time (no batching).
 ///   Batched    — N requests submitted together, continuous batching.
@@ -7,11 +7,11 @@
 #include <chrono>
 #include <string>
 #include <vector>
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
 
-using namespace lightllm::engine;
-using namespace lightllm::kv_cache;
+using namespace nanoinfer::engine;
+using namespace nanoinfer::kv_cache;
 
 static double wall_ms(std::chrono::steady_clock::time_point t0) {
     auto t1 = std::chrono::steady_clock::now();
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--max-batch-tokens") && i+1 < argc) max_batch_tokens = std::atoi(argv[++i]);
     }
 
-    printf("=== LightLLM Throughput vs Concurrency (EngineServer) ===\n");
+    printf("=== NanoInfer Throughput vs Concurrency (EngineServer) ===\n");
     printf("Model: %s | prompt=5 tok | gen=8 tok | %s\n\n",
            model_dir, use_fp16 ? "fp16" : "fp32");
 

@@ -1,4 +1,4 @@
-/// LightLLM — fp16 mixed-precision quick test.
+/// NanoInfer — fp16 mixed-precision quick test.
 /// Usage: bench_fp16
 #include <cstdio>
 #include <cstring>
@@ -8,14 +8,14 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 
-#include "lightllm/tensor.h"
-#include "lightllm/model/model_loader.h"
-#include "lightllm/model/model_config.h"
-#include "lightllm/ops/gemm.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/model/model_loader.h"
+#include "nanoinfer/model/model_config.h"
+#include "nanoinfer/ops/gemm.h"
 
-using namespace lightllm;
-using namespace lightllm::model;
-using namespace lightllm::ops;
+using namespace nanoinfer;
+using namespace nanoinfer::model;
+using namespace nanoinfer::ops;
 
 // Load BF16→fp16 on GPU
 static Tensor load_f16(SafetensorsLoader& l, const std::string& n) {
@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
         if (!strcmp(argv[i], "--model") && i+1 < argc) mdl = argv[++i];
     }
 
-    printf("=== LightLLM fp16 Memory Benchmark ===\n");
+    printf("=== NanoInfer fp16 Memory Benchmark ===\n");
     fflush(stdout);
 
     char buf[512];

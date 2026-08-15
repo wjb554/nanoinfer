@@ -1,4 +1,4 @@
-/// LightLLM — Multi-user simulation benchmark (v3 — continuous batching).
+/// NanoInfer — Multi-user simulation benchmark (v3 — continuous batching).
 /// Simulates Poisson-arrival requests with BatchMainLoop for heterogeneous
 /// batch execution.  Tracks per-request latency and per-step batch efficiency.
 /// Usage: bench_simulation [duration_sec=60] [arrival_rate=0.5] [report_intv=10]
@@ -17,11 +17,11 @@
 #include <string>
 #include <vector>
 
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
 #include "bench_common.h"
 
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 // ============================================================================
 // Timing helpers
@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
     // max_batch_tokens: from --max-batch-tokens, else auto-derived from GPU memory
 
     printf("=============================================================\n");
-    printf("  LightLLM — Multi-User Simulation Benchmark (cont. batching)\n");
+    printf("  NanoInfer — Multi-User Simulation Benchmark (cont. batching)\n");
     printf("  Duration: %.0f s | Arrival: %.2f req/s | Prompt pool: %zu\n",
            duration_sec, arrival_rate, prompts.size());
     printf("  Chunk size: %d | Max batch tokens: %d\n",
@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
     printf("Loading model... (%s, %s)\n", model_dir,
            use_fp16 ? "FP16" : "FP32");
     EngineServer engine(model_dir, 0, max_batch_tokens, kv_cache_mb,
-                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        nanoinfer::kv_cache::prefix_cache_policy_from_env(),
                         use_fp16);
 
     // --- Init batch loop ---

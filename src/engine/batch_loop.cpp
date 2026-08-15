@@ -20,7 +20,7 @@
 ///     or by a speculative EOS token (where st.is_eos is false).  The
 ///     termination check must handle both.
 
-#include "lightllm/engine/batch_loop.h"
+#include "nanoinfer/engine/batch_loop.h"
 
 #include <algorithm>
 #include <chrono>
@@ -29,7 +29,7 @@
 #include <stdexcept>
 #include <thread>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace engine {
 
 // ============================================================================
@@ -468,4 +468,4 @@ double BatchMainLoop::throughput_tok_s() const {
 }
 
 }  // namespace engine
-}  // namespace lightllm
+}  // namespace nanoinfer

@@ -3,15 +3,15 @@
 #include <cmath>
 #include <vector>
 #include <cuda_runtime.h>
-#include "lightllm/tensor.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/model/model_loader.h"
-#include "lightllm/model/model_config.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/rope.h"
-#include "lightllm/ops/gemm.h"
-#include "lightllm/ops/elementwise.h"
-using namespace lightllm;using namespace lightllm::model;using namespace lightllm::kv_cache;using namespace lightllm::ops;
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/model/model_loader.h"
+#include "nanoinfer/model/model_config.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/rope.h"
+#include "nanoinfer/ops/gemm.h"
+#include "nanoinfer/ops/elementwise.h"
+using namespace nanoinfer;using namespace nanoinfer::model;using namespace nanoinfer::kv_cache;using namespace nanoinfer::ops;
 static int passed=0,failed=0;
 static void CHECK(const char* n,bool c){if(c)passed++;else{failed++;fprintf(stderr,"  FAIL: %s\n",n);}}
 static std::vector<float> bf16f32(const std::vector<char>& r){std::vector<float> f(r.size()/2);for(size_t i=0;i<f.size();i++){uint16_t b=((uint16_t*)r.data())[i];uint32_t u=b<<16;f[i]=*(float*)&u;}return f;}

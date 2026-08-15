@@ -16,13 +16,13 @@
 /// float→scalar_t on store.  Accumulators (dot products, softmax m/l/acc)
 /// stay float throughout.
 
-#include "lightllm/kv_cache/paged_attention.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/kv_cache/paged_attention.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/ops/dispatch.h"
 #include <cuda_runtime.h>
 #include <stdexcept>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace kv_cache {
 
 static constexpr int BLOCK              = 16;   // tokens per physical block
@@ -1396,4 +1396,4 @@ void first_prefill_attn_batched_gpu_dispatch(
 }
 
 }  // namespace kv_cache
-}  // namespace lightllm
+}  // namespace nanoinfer

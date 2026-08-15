@@ -1,5 +1,5 @@
 #pragma once
-/// Shared helpers for the LightLLM benchmark tools (tools/*.cpp).
+/// Shared helpers for the NanoInfer benchmark tools (tools/*.cpp).
 
 #include <cuda_runtime.h>
 

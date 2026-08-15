@@ -1,4 +1,4 @@
-/// LightLLM HTTP Inference Server — loads model, serves requests.
+/// NanoInfer HTTP Inference Server — loads model, serves requests.
 /// POST /v1/chat/completions  {"prompt":[ids],"max_tokens":N} → {"tokens":[...]}
 /// Backed by EngineServer + BatchMainLoop (single-threaded handler).
 #include <cstdio>
@@ -6,12 +6,12 @@
 #include <string>
 #include <cstring>
 #include <chrono>
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/server/http_server.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/server/http_server.h"
 
-using namespace lightllm::engine;
-using namespace lightllm::server;
+using namespace nanoinfer::engine;
+using namespace nanoinfer::server;
 
 // Minimal JSON builder
 static std::string json_obj(const std::string& content){
@@ -44,9 +44,9 @@ static std::vector<int> json_int_array(const std::string& body,const std::string
 }
 
 int main(){
-    printf("=== LightLLM HTTP Server ===\nLoading model...\n");
+    printf("=== NanoInfer HTTP Server ===\nLoading model...\n");
     EngineServer engine("models/qwen2.5-0.5b", /*max_seq_len=*/0, /*max_batch_tokens=*/256,
-                        /*kv_cache_mb=*/0, lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        /*kv_cache_mb=*/0, nanoinfer::kv_cache::prefix_cache_policy_from_env(),
                         /*use_fp16=*/false);
     BatchMainLoop loop(engine, SchedulerPolicy::FCFS, /*chunk_size=*/16, /*max_batch_tokens=*/256);
 

@@ -8,10 +8,10 @@
 #include <string>
 #include <vector>
 
-#include "lightllm/model/model_loader.h"
+#include "nanoinfer/model/model_loader.h"
 
-using namespace lightllm;
-using namespace lightllm::model;
+using namespace nanoinfer;
+using namespace nanoinfer::model;
 
 int main(int argc, char** argv) {
     std::string dir = argc > 1 ? argv[1] : "models/qwen2.5-0.5b";

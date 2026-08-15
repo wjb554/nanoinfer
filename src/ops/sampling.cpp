@@ -1,9 +1,9 @@
-/// LightLLM Sampling — CPU-based token selection from logits.
+/// NanoInfer Sampling — CPU-based token selection from logits.
 ///
 /// Implements temperature scaling, top-k, top-p, min-p filtering, and
 /// multinomial sampling.  Entire pipeline runs on CPU (see sampling.h
 /// for design rationale).
-#include "lightllm/ops/sampling.h"
+#include "nanoinfer/ops/sampling.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 // ===========================================================================
@@ -370,4 +370,4 @@ void apply_grammar_mask(float* logits, int vocab_size, const int32_t* mask) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

@@ -1,8 +1,8 @@
-#include "lightllm/ops/elementwise.h"
+#include "nanoinfer/ops/elementwise.h"
 #include <cuda_runtime.h>
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/dispatch.h"
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 template <typename T>
@@ -105,4 +105,4 @@ void silu_inplace(Tensor& x) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

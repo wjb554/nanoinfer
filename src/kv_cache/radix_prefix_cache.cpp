@@ -1,19 +1,19 @@
 /// RadixPrefixCache — SGLang-style radix tree (Patricia trie) implementation.
 ///
-/// See include/lightllm/kv_cache/prefix_cache.h for the full design document
+/// See include/nanoinfer/kv_cache/prefix_cache.h for the full design document
 /// and algorithm descriptions.
 ///
 /// Thread safety: not thread-safe.  The caller (BlockAllocator) serialises
 /// access within a single step() call.
 
-#include "lightllm/kv_cache/prefix_cache.h"
+#include "nanoinfer/kv_cache/prefix_cache.h"
 
 #include <algorithm>
 #include <climits>
 #include <cstdint>
 #include <utility>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace kv_cache {
 
 // Forward declaration for file-local helpers.
@@ -713,4 +713,4 @@ std::unique_ptr<PrefixCache> create_prefix_cache(PrefixCachePolicy policy,
 }
 
 }  // namespace kv_cache
-}  // namespace lightllm
+}  // namespace nanoinfer

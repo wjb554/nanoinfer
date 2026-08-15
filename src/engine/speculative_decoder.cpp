@@ -16,13 +16,13 @@
 /// Both paths use the SAME attention mechanism (paged_attention kernel),
 /// so same-model self-speculation naturally produces 100% acceptance.
 
-#include "lightllm/engine/speculative_decoder.h"
-#include "lightllm/engine/engine.h"
-#include "lightllm/ops/sampling.h"
-#include "lightllm/ops/lm_head.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/embedding.h"
-#include "lightllm/ops/argmax.h"
+#include "nanoinfer/engine/speculative_decoder.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/ops/sampling.h"
+#include "nanoinfer/ops/lm_head.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/embedding.h"
+#include "nanoinfer/ops/argmax.h"
 
 #include <algorithm>
 #include <chrono>
@@ -33,7 +33,7 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace engine {
 
 using namespace ops;
@@ -310,4 +310,4 @@ SpeculativeResult speculative_step(
 }
 
 }  // namespace engine
-}  // namespace lightllm
+}  // namespace nanoinfer

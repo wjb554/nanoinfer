@@ -10,17 +10,17 @@
 #include <string>
 #include <cuda_runtime.h>
 
-#include "lightllm/tensor.h"
-#include "lightllm/model/model_loader.h"
-#include "lightllm/model/model_config.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/rope.h"
-#include "lightllm/ops/gemm.h"
-#include "lightllm/ops/elementwise.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/model/model_loader.h"
+#include "nanoinfer/model/model_config.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/rope.h"
+#include "nanoinfer/ops/gemm.h"
+#include "nanoinfer/ops/elementwise.h"
 
-using namespace lightllm;
-using namespace lightllm::model;
-using namespace lightllm::ops;
+using namespace nanoinfer;
+using namespace nanoinfer::model;
+using namespace nanoinfer::ops;
 
 static int passed=0,failed=0;
 static void CHECK(const char* n,bool c){if(c)passed++;else{failed++;fprintf(stderr,"  FAIL: %s\n",n);}}

@@ -14,12 +14,12 @@
 #include <string>
 #include <vector>
 
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 #include "bench_common.h"
 
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 int main(int argc, char** argv) {
     const char* model_dir = "models/qwen2.5-0.5b";
@@ -44,9 +44,9 @@ int main(int argc, char** argv) {
     if (max_batch_tokens <= 0) max_batch_tokens = default_batch_tokens();
 
     EngineServer engine(model_dir, /*max_seq_len=*/0, max_batch_tokens, 0,
-                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        nanoinfer::kv_cache::prefix_cache_policy_from_env(),
                         use_fp16);
-    lightllm::tokenizer::Tokenizer tok(std::string(model_dir) + "/tokenizer.json");
+    nanoinfer::tokenizer::Tokenizer tok(std::string(model_dir) + "/tokenizer.json");
 
     std::vector<int> ptoks;
     if (!tokens_arg.empty()) {

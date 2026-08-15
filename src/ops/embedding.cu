@@ -1,9 +1,9 @@
 /// Embedding lookup — one thread per output element.
-#include "lightllm/ops/embedding.h"
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/embedding.h"
+#include "nanoinfer/ops/dispatch.h"
 #include <cuda_runtime.h>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 template<typename T>
@@ -34,4 +34,4 @@ Tensor embedding(const Tensor& token_ids, const Tensor& weight) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

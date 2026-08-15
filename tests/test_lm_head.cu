@@ -2,7 +2,7 @@
 /// CPU reference, exercises edge cases, validates greedy consistency, and
 /// measures performance.
 ///
-/// See include/lightllm/ops/lm_head.h for the kernel architecture docs.
+/// See include/nanoinfer/ops/lm_head.h for the kernel architecture docs.
 
 #include <cstdio>
 #include <cmath>
@@ -12,11 +12,11 @@
 #include <cuda_runtime.h>
 #include <algorithm>
 
-#include "lightllm/tensor.h"
-#include "lightllm/ops/lm_head.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/ops/lm_head.h"
 
-using namespace lightllm;
-using namespace lightllm::ops;
+using namespace nanoinfer;
+using namespace nanoinfer::ops;
 
 // ---------------------------------------------------------------------------
 // Test framework
@@ -557,7 +557,7 @@ static void test_performance() {
 // Main
 // ===========================================================================
 int main() {
-    printf("LightLLM: lm_head kernel correctness tests\n");
+    printf("NanoInfer: lm_head kernel correctness tests\n");
     printf("==========================================\n\n");
     fflush(stdout);
 

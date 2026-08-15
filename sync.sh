@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# LightLLM — 本地 → 远程 GPU 服务器一键同步 + 编译
+# NanoInfer — 本地 → 远程 GPU 服务器一键同步 + 编译
 #
 # 用法:
 #   bash sync.sh              # 同步代码 + 远程增量编译
@@ -22,7 +22,7 @@
 # ---------- 配置（改这里） ----------
 REMOTE="root@connect.nmb1.seetacloud.com"   # SSH 地址
 PORT=21858                          # SSH 端口
-REMOTE_PATH="~/lightllm"            # 服务器上的项目路径
+REMOTE_PATH="~/NanoInfer"            # 服务器上的项目路径
 ARCH="89"                           # GPU 算力: 89=4090, 80=A100, 90=H800, 86=3090, 75=2060
 CUDA_PATH="/usr/local/cuda"         # 服务器 CUDA 工具链路径（nvcc 所在目录的上级）
 # -----------------------------------

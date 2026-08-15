@@ -12,10 +12,10 @@
 /// Uses EngineServer + BatchMainLoop for both modes.
 /// Temperature=0 (greedy).  3 runs median.  k={1,2,3,4,5,6,8}.
 
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/engine/engine.h"
-#include "lightllm/kv_cache/prefix_cache.h"
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/kv_cache/prefix_cache.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -23,8 +23,8 @@
 #include <string>
 #include <vector>
 
-using namespace lightllm;
-using namespace lightllm::engine;
+using namespace nanoinfer;
+using namespace nanoinfer::engine;
 
 static double median_of_three(double a, double b, double c) {
     if (a > b) std::swap(a, b); if (b > c) std::swap(b, c);
@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
     // target logits -> 0% acceptance.  The draft engine inherits this size.)
     printf("Loading target model...\n");
     EngineServer target(target_dir, /*max_seq_len=*/0, /*max_batch_tokens=*/256, 0,
-        lightllm::kv_cache::prefix_cache_policy_from_env(),
+        nanoinfer::kv_cache::prefix_cache_policy_from_env(),
         /*use_fp16=*/true);
 
     // ---- Enable speculative decode ONCE (dual-mode loads draft model) ----
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
     // ---- Tokenizer (draft and target share same vocab for Qwen2.5) ----
     char tok_path[512];
     snprintf(tok_path, sizeof(tok_path), "%s/tokenizer.json", target_dir);
-    lightllm::tokenizer::Tokenizer tok(tok_path);
+    nanoinfer::tokenizer::Tokenizer tok(tok_path);
 
     // ---- Prompts ----
     struct { const char* text; const char* label; } prompts[] = {

@@ -21,13 +21,13 @@
 #include <string>
 #include <vector>
 
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 #include "bench_common.h"
 
-using namespace lightllm::engine;
-using namespace lightllm::kv_cache;
+using namespace nanoinfer::engine;
+using namespace nanoinfer::kv_cache;
 
 // ---- Build a long, VARIED English corpus.  Repeating a single paragraph makes
 // the model degrade (off-distribution repetition); a varied multi-topic passage
@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
     printf("Loading %s (%s)...\n", model_dir, use_fp16 ? "FP16" : "FP32");
     EngineServer engine(model_dir, /*max_seq_len=*/0, max_batch_tokens, /*kv_cache_mb=*/0,
                         prefix_cache_policy_from_env(), use_fp16);
-    lightllm::tokenizer::Tokenizer tok(std::string(model_dir) + "/tokenizer.json");
+    nanoinfer::tokenizer::Tokenizer tok(std::string(model_dir) + "/tokenizer.json");
 
     // ---- Build the corpus token list (long) ----
     std::string corpus = build_corpus(1000);
@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
     FILE* logf = fopen(out_file.c_str(), "w");
     if (!logf) { fprintf(stderr, "cannot open %s\n", out_file.c_str()); return 1; }
 
-    fprintf(logf, "# LightLLM prompt-length latency report\n");
+    fprintf(logf, "# NanoInfer prompt-length latency report\n");
     fprintf(logf, "# model=%s fp16=%d max_new=%d\n", model_dir, use_fp16 ? 1 : 0, max_new);
     fprintf(logf, "# GPU auto (server RTX 4090)\n\n");
 

@@ -24,18 +24,18 @@
 ///   5. Token prediction comparison
 ///   6. Report per-layer results
 
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/scheduler.h"
-#include "lightllm/kv_cache/prefix_cache.h"
-#include "lightllm/kv_cache/paged_attention.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/tokenizer/tokenizer.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/lm_head.h"
-#include "lightllm/ops/gemm.h"
-#include "lightllm/ops/rope.h"
-#include "lightllm/ops/activation.h"
-#include "lightllm/ops/elementwise.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/kv_cache/prefix_cache.h"
+#include "nanoinfer/kv_cache/paged_attention.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/lm_head.h"
+#include "nanoinfer/ops/gemm.h"
+#include "nanoinfer/ops/rope.h"
+#include "nanoinfer/ops/activation.h"
+#include "nanoinfer/ops/elementwise.h"
 
 #include <cstdio>
 #include <cmath>
@@ -51,10 +51,10 @@
 #include <windows.h>
 #endif
 
-using namespace lightllm;
-using namespace lightllm::engine;
-using namespace lightllm::kv_cache;
-using namespace lightllm::ops;
+using namespace nanoinfer;
+using namespace nanoinfer::engine;
+using namespace nanoinfer::kv_cache;
+using namespace nanoinfer::ops;
 
 // ============================================================================
 static void enable_utf8_console() {
@@ -230,7 +230,7 @@ int main(int argc, char** argv) {
     if (argc > 1) model_dir = argv[1];
 
     printf("=================================================================\n");
-    printf("  LightLLM — Attention Divergence Test (kernel correctness)\n");
+    printf("  NanoInfer — Attention Divergence Test (kernel correctness)\n");
     printf("  Model: %s\n", model_dir);
     printf("=================================================================\n\n");
 

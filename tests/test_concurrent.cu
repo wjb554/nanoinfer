@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
 
-using namespace lightllm::engine;
-using namespace lightllm::kv_cache;
+using namespace nanoinfer::engine;
+using namespace nanoinfer::kv_cache;
 
 int main(int argc, char** argv) {
     const char* model_dir = argc > 1 ? argv[1] : "models/qwen2.5-0.5b";

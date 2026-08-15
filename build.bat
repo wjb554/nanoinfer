@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM LightLLM — Release Build
+REM NanoInfer — Release Build
 REM ============================================================
 setlocal
 

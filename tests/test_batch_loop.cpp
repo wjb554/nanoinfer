@@ -48,16 +48,16 @@
 
 #include <cuda_runtime.h>
 
-#include "lightllm/tensor.h"
-#include "lightllm/model/model_config.h"
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/scheduler.h"
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/kv_cache/block_allocator.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/model/model_config.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
 
-using namespace lightllm;
-using namespace lightllm::engine;
-using namespace lightllm::model;
+using namespace nanoinfer;
+using namespace nanoinfer::engine;
+using namespace nanoinfer::model;
 
 // ============================================================================
 // Test framework
@@ -1066,7 +1066,7 @@ int main(int argc, char** argv) {
     if (argc > 1) model_dir = argv[1];
 
     printf("=============================================================\n");
-    printf("  LightLLM — Continuous Batching Integration Test\n");
+    printf("  NanoInfer — Continuous Batching Integration Test\n");
     printf("  Model: %s\n", model_dir);
     printf("=============================================================\n");
 

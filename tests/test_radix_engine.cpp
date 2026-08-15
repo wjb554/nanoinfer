@@ -1,4 +1,4 @@
-/// LightLLM -- Radix Tree Engine Tests
+/// NanoInfer -- Radix Tree Engine Tests
 ///
 /// Dedicated tests for RadixPrefixCache internals and tree invariants.
 /// Complements test_prefix_cache.cpp with deeper probing of the radix
@@ -21,9 +21,9 @@
 #include <set>
 #include <algorithm>
 
-#include "lightllm/kv_cache/prefix_cache.h"
+#include "nanoinfer/kv_cache/prefix_cache.h"
 
-using namespace lightllm::kv_cache;
+using namespace nanoinfer::kv_cache;
 
 // ============================================================================
 // Test harness
@@ -987,7 +987,7 @@ static void test_shared_path_same_block() {
 // main
 // ============================================================================
 int main() {
-    std::printf("LightLLM -- Radix Engine Tests\n");
+    std::printf("NanoInfer -- Radix Engine Tests\n");
     std::printf("===============================\n\n");
 
     test_empty_tree();

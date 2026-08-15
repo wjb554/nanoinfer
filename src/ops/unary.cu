@@ -1,8 +1,8 @@
 /// Element-wise unary ops — neg, abs, sign, clip, round/floor/ceil, pow, sqrt, exp, log
-#include "lightllm/ops/unary.h"
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/unary.h"
+#include "nanoinfer/ops/dispatch.h"
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 template<typename T> __global__ void neg_kernel(T* x,int N){int i=blockIdx.x*256+threadIdx.x;if(i<N)x[i]=T(-float(x[i]));}
@@ -50,4 +50,4 @@ void log_op(Tensor& x){int N=int(x.numel());DISPATCH_FLOAT_TYPES(x.dtype(),"log"
     log_kernel<scalar_t><<<(N+255)/256,256>>>(x.data<scalar_t>(),N);});}
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

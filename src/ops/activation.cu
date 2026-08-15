@@ -1,8 +1,8 @@
 /// Activation functions — one kernel per function, one thread per element.
-#include "lightllm/ops/activation.h"
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/activation.h"
+#include "nanoinfer/ops/dispatch.h"
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 template<typename T>
@@ -55,4 +55,4 @@ void mish(Tensor& x){int N=int(x.numel());DISPATCH_FLOAT_TYPES(x.dtype(),"mish",
     mish_kernel<scalar_t><<<(N+255)/256,256>>>(x.data<scalar_t>(),N);});}
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

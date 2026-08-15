@@ -3,10 +3,10 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
 #include "bench_common.h"
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 int test_N(EngineServer& engine, int N, int max_batch_tokens) {
     BatchMainLoop batch(engine, SchedulerPolicy::DecodeFirst, 16, max_batch_tokens, 999);
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
            model_dir, use_fp16 ? "FP16" : "FP32", max_batch_tokens);
 
     EngineServer engine(model_dir, 0, max_batch_tokens, kv_cache_mb,
-                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        nanoinfer::kv_cache::prefix_cache_policy_from_env(),
                         use_fp16);
     printf("KV blocks: %d\n\n", engine.num_blocks());
     fflush(stdout);

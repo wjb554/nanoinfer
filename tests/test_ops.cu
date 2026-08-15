@@ -6,16 +6,16 @@
 #include <initializer_list>
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
-#include "lightllm/tensor.h"
-#include "lightllm/ops/elementwise.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/rope.h"
-#include "lightllm/ops/gemm.h"
-#include "lightllm/ops/activation.h"
-#include "lightllm/ops/unary.h"
-// #include "lightllm/ops/softmax.h" // TODO: fix
-// #include "lightllm/ops/reduce.h"  // TODO: fix
-using namespace lightllm; using namespace lightllm::ops;
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/ops/elementwise.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/rope.h"
+#include "nanoinfer/ops/gemm.h"
+#include "nanoinfer/ops/activation.h"
+#include "nanoinfer/ops/unary.h"
+// #include "nanoinfer/ops/softmax.h" // TODO: fix
+// #include "nanoinfer/ops/reduce.h"  // TODO: fix
+using namespace nanoinfer; using namespace nanoinfer::ops;
 
 static int tests_run=0,tests_passed=0;
 static void check(const char* n,bool c){tests_run++;if(c)tests_passed++;else fprintf(stderr,"  FAIL: %s\n",n);}
@@ -281,7 +281,7 @@ void test_unary(){
 // void test_softmax_reduce(){} // TODO: fix reduce/softmax
 
 int main(){
-    printf("LightLLM START\n");fflush(stdout);
+    printf("NanoInfer START\n");fflush(stdout);
     test_add();fflush(stdout);
     test_silu();fflush(stdout);
     test_rms_norm();fflush(stdout);

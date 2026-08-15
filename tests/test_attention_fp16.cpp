@@ -1,4 +1,4 @@
-/// LightLLM — Attention FP16 Correctness Tests
+/// NanoInfer — Attention FP16 Correctness Tests
 ///
 /// Verifies that fp16 paged attention (decode and prefill) produces results
 /// indistinguishable from fp32 attention.
@@ -11,9 +11,9 @@
 ///   5. Prefill Flash   (P=128, D=64)        — tiled FlashAttention path
 ///   6. Gradient-free   (D=128)              — no NaN/Inf in output
 
-#include "lightllm/tensor.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/kv_cache/paged_attention.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/kv_cache/paged_attention.h"
 
 #include <cstdio>
 #include <cmath>
@@ -22,8 +22,8 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 
-using namespace lightllm;
-using namespace lightllm::kv_cache;
+using namespace nanoinfer;
+using namespace nanoinfer::kv_cache;
 
 // ============================================================================
 // LCG pseudo-random generator (deterministic, portable)

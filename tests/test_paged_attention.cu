@@ -4,12 +4,12 @@
 #include <vector>
 #include <cuda_runtime.h>
 
-#include "lightllm/tensor.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/kv_cache/paged_attention.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/kv_cache/paged_attention.h"
 
-using namespace lightllm;
-using namespace lightllm::kv_cache;
+using namespace nanoinfer;
+using namespace nanoinfer::kv_cache;
 
 static int passed=0,failed=0;
 static void CHECK(const char* n,bool c){if(c)passed++;else{failed++;fprintf(stderr,"  FAIL: %s\n",n);}}

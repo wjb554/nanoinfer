@@ -22,12 +22,12 @@
 
 #include <cuda_runtime.h>
 
-#include "lightllm/tensor.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/kv_cache/paged_attention.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/kv_cache/paged_attention.h"
 
-using namespace lightllm;
-using namespace lightllm::kv_cache;
+using namespace nanoinfer;
+using namespace nanoinfer::kv_cache;
 
 // =========================================================================
 // Test infrastructure
@@ -868,7 +868,7 @@ static int count_section(const char* label, int n, const char* status) {
 
 int main() {
     printf("================================================================\n");
-    printf("  LightLLM Paged Prefill Attention --- Comprehensive Test Suite\n");
+    printf("  NanoInfer Paged Prefill Attention --- Comprehensive Test Suite\n");
     printf("================================================================\n");
     printf("  Config: D=64, Hq=4, Hkv=2, block_size=16\n");
 

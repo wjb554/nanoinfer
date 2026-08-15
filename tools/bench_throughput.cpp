@@ -1,4 +1,4 @@
-/// LightLLM — High-throughput simulation with mixed-length requests.
+/// NanoInfer — High-throughput simulation with mixed-length requests.
 /// Maximizes GPU memory utilization, leaves ~500 MB headroom.
 /// Usage: bench_throughput [duration_sec=60] [arrival_rate=1.0]
 
@@ -16,11 +16,11 @@
 #include <thread>
 #include <vector>
 
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
 #include "bench_common.h"
 
-using namespace lightllm::engine;
+using namespace nanoinfer::engine;
 
 static double now_sec() {
     static auto t0 = std::chrono::steady_clock::now();
@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
     // max_batch_tokens: from --max-batch-tokens, else auto-derived from GPU memory
 
     printf("=============================================================\n");
-    printf("  LightLLM — High-Throughput Simulation\n");
+    printf("  NanoInfer — High-Throughput Simulation\n");
     printf("  Duration: %.0f s | Arrival: %.2f req/s\n", duration_sec, arrival_rate);
     printf("  Model: %s | Precision: %s\n", model_dir,
            use_fp16 ? "FP16" : "FP32");
@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
     printf("Loading model (KV pool auto-sized to GPU free memory)...\n");
     EngineServer engine(model_dir, /*max_seq_len=*/0,
                         max_batch_tokens, kv_cache_mb,
-                        lightllm::kv_cache::prefix_cache_policy_from_env(),
+                        nanoinfer::kv_cache::prefix_cache_policy_from_env(),
                         use_fp16);
     printf("KV pool: %d blocks/layer × %d layers = %.0f MB\n",
            engine.num_blocks(), engine.num_layers(),

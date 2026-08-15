@@ -1,11 +1,11 @@
 /// Naive attention — CPU-side loops for correctness (Phase 2 baseline).
-#include "lightllm/ops/attention.h"
+#include "nanoinfer/ops/attention.h"
 #include <cuda_runtime.h>
 #include <cmath>
 #include <stdexcept>
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/dispatch.h"
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v) {
@@ -76,4 +76,4 @@ Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

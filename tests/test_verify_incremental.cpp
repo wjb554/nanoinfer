@@ -31,11 +31,11 @@
 /// Requires: models/qwen2.5-0.5b/ (tests 1-4), and optionally
 ///           models/qwen2.5-1.5b/ for test 3.
 
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/scheduler.h"
-#include "lightllm/kv_cache/prefix_cache.h"
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/kv_cache/prefix_cache.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 
 #include <cuda_runtime.h>
 
@@ -52,8 +52,8 @@
 #include <windows.h>
 #endif
 
-using namespace lightllm;
-using namespace lightllm::engine;
+using namespace nanoinfer;
+using namespace nanoinfer::engine;
 
 // ============================================================================
 // UTF-8 console helper
@@ -808,7 +808,7 @@ int main(int argc, char** argv) {
     enable_utf8_console();
 
     printf("=============================================================\n");
-    printf("  LightLLM — Incremental Verify Correctness Tests\n");
+    printf("  NanoInfer — Incremental Verify Correctness Tests\n");
     printf("  0.5B model: %s\n", model_05b);
     printf("  1.5B model: %s\n", model_15b);
     printf("=============================================================\n");

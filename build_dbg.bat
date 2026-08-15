@@ -14,7 +14,7 @@ if exist "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Bui
 
 call %VCVARS% x64 >nul 2>&1
 
-cd /d "D:\ai infra project\lightllm"
+cd /d "D:\ai infra project\nanoinfer"
 cmake -S . -B build_dbg -G Ninja -DCMAKE_BUILD_TYPE=Debug
 if %errorlevel% neq 0 exit /b %errorlevel%
 

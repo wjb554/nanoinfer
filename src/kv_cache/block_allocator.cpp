@@ -1,6 +1,6 @@
 /// BlockAllocator + BlockTable implementation.
 
-#include "lightllm/kv_cache/block_allocator.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
 
 #include <algorithm>
 #include <cstring>
@@ -8,7 +8,7 @@
 
 #include <cuda_runtime.h>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace kv_cache {
 
 // ===== BlockAllocator =======================================================
@@ -248,4 +248,4 @@ int BlockTable::operator[](int pos) const {
 }
 
 }  // namespace kv_cache
-}  // namespace lightllm
+}  // namespace nanoinfer

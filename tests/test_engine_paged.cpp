@@ -26,23 +26,23 @@
 #include <stdexcept>
 #include <cuda_runtime.h>
 
-#include "lightllm/tensor.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/kv_cache/paged_attention.h"
-#include "lightllm/model/model_loader.h"
-#include "lightllm/model/model_config.h"
-#include "lightllm/ops/norm.h"
-#include "lightllm/ops/rope.h"
-#include "lightllm/ops/gemm.h"
-#include "lightllm/ops/elementwise.h"
-#include "lightllm/ops/attention.h"
-#include "lightllm/ops/sampling.h"
-#include "lightllm/ops/lm_head.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/kv_cache/paged_attention.h"
+#include "nanoinfer/model/model_loader.h"
+#include "nanoinfer/model/model_config.h"
+#include "nanoinfer/ops/norm.h"
+#include "nanoinfer/ops/rope.h"
+#include "nanoinfer/ops/gemm.h"
+#include "nanoinfer/ops/elementwise.h"
+#include "nanoinfer/ops/attention.h"
+#include "nanoinfer/ops/sampling.h"
+#include "nanoinfer/ops/lm_head.h"
 
-using namespace lightllm;
-using namespace lightllm::model;
-using namespace lightllm::kv_cache;
-using namespace lightllm::ops;
+using namespace nanoinfer;
+using namespace nanoinfer::model;
+using namespace nanoinfer::kv_cache;
+using namespace nanoinfer::ops;
 
 // ============================================================================
 // Test framework
@@ -1006,7 +1006,7 @@ int main(int argc, char** argv) {
     if (argc > 1) model_dir = argv[1];
 
     printf("=============================================================\n");
-    printf("  LightLLM — PagedAttention Engine Integration Test\n");
+    printf("  NanoInfer — PagedAttention Engine Integration Test\n");
     printf("  Model: %s\n", model_dir);
     printf("=============================================================\n");
 

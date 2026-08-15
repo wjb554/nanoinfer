@@ -1,12 +1,12 @@
 /// HuggingFace config.json parser (manual, no JSON library dependency).
 
-#include "lightllm/model/model_config.h"
+#include "nanoinfer/model/model_config.h"
 
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace model {
 
 // Extract integer value for a given key from JSON text
@@ -138,4 +138,4 @@ std::string ModelConfig::to_string() const {
 }
 
 }  // namespace model
-}  // namespace lightllm
+}  // namespace nanoinfer

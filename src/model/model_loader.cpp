@@ -5,7 +5,7 @@
 ///
 /// We parse it with simple string operations (no JSON library needed).
 
-#include "lightllm/model/model_loader.h"
+#include "nanoinfer/model/model_loader.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -15,7 +15,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace model {
 
 // --- helpers ---------------------------------------------------------------
@@ -242,4 +242,4 @@ std::vector<std::string> SafetensorsLoader::tensor_names() const {
 }
 
 }  // namespace model
-}  // namespace lightllm
+}  // namespace nanoinfer

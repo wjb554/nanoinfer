@@ -21,12 +21,12 @@
 
 #include <cuda_runtime.h>
 
-#include "lightllm/tensor.h"
-#include "lightllm/kv_cache/block_allocator.h"
-#include "lightllm/kv_cache/paged_attention.h"
+#include "nanoinfer/tensor.h"
+#include "nanoinfer/kv_cache/block_allocator.h"
+#include "nanoinfer/kv_cache/paged_attention.h"
 
-using namespace lightllm;
-using namespace lightllm::kv_cache;
+using namespace nanoinfer;
+using namespace nanoinfer::kv_cache;
 
 // ---------------------------------------------------------------------------
 // Test infrastructure
@@ -824,7 +824,7 @@ static void test_edge_cases() {
 
 int main() {
     printf("================================================================\n");
-    printf("  LightLLM PagedAttention V2 — Comprehensive Test Suite\n");
+    printf("  NanoInfer PagedAttention V2 — Comprehensive Test Suite\n");
     printf("================================================================\n");
 
     // --- Run all sections ---

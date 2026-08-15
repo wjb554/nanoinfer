@@ -1,11 +1,11 @@
 /// RMSNorm — simplified two-kernel version for debuggability.
 /// Kernel 1: compute sum(x^2) per row. Kernel 2: normalize.
 
-#include "lightllm/ops/norm.h"
+#include "nanoinfer/ops/norm.h"
 #include <cuda_runtime.h>
-#include "lightllm/ops/dispatch.h"
+#include "nanoinfer/ops/dispatch.h"
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 template <typename T>
@@ -76,4 +76,4 @@ Tensor rms_norm(const Tensor& x, const Tensor& weight, float eps) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer

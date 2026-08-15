@@ -25,7 +25,7 @@ CMD="./build/bench_spec_decode $*"
 
 {
   echo "############################################################"
-  echo "# LightLLM 实验日志 (speculative decode)"
+  echo "# NanoInfer 实验日志 (speculative decode)"
   echo "# 目的: $PURPOSE"
   echo "# 时间: $(date '+%Y-%m-%d %H:%M:%S %Z')"
   echo "# GPU:  $GPU"

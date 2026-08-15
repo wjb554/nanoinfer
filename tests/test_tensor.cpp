@@ -1,14 +1,14 @@
-// LightLLM - Tensor unit tests
+// NanoInfer - Tensor unit tests
 #include <cassert>
 #include <cstdio>
 #include <cmath>
 #include <vector>
 
-#include "lightllm/tensor.h"
+#include "nanoinfer/tensor.h"
 
-using lightllm::Device;
-using lightllm::DType;
-using lightllm::Tensor;
+using nanoinfer::Device;
+using nanoinfer::DType;
+using nanoinfer::Tensor;
 
 // helpers
 static int tests_run = 0;
@@ -108,7 +108,7 @@ static void test_fill_zeros() {
 }
 
 int main() {
-    std::printf("LightLLM - Tensor Tests\n");
+    std::printf("NanoInfer - Tensor Tests\n");
     std::printf("=======================\n\n");
 
     test_cpu_tensor();

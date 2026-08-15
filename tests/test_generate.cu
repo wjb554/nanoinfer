@@ -5,12 +5,12 @@
 #include <string>
 #include <vector>
 
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 
-using namespace lightllm::engine;
-using namespace lightllm::kv_cache;
+using namespace nanoinfer::engine;
+using namespace nanoinfer::kv_cache;
 
 int main(int argc, char** argv) {
     const char* model_dir = argc > 1 ? argv[1] : "models/qwen2.5-0.5b";
@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
 
     EngineServer engine(model_dir, /*max_seq_len=*/0, /*max_batch_tokens=*/256,
                         /*kv_cache_mb=*/0, prefix_cache_policy_from_env(), use_fp16);
-    lightllm::tokenizer::Tokenizer tok(std::string(model_dir) + "/tokenizer.json");
+    nanoinfer::tokenizer::Tokenizer tok(std::string(model_dir) + "/tokenizer.json");
 
     const char* text = "The capital of France is";
     std::vector<int> prompt = tok.encode(text);

@@ -38,11 +38,11 @@
 ///
 /// Requires: models/qwen2.5-0.5b/
 
-#include "lightllm/engine/batch_loop.h"
-#include "lightllm/engine/engine.h"
-#include "lightllm/engine/scheduler.h"
-#include "lightllm/kv_cache/prefix_cache.h"
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/engine/batch_loop.h"
+#include "nanoinfer/engine/engine.h"
+#include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/kv_cache/prefix_cache.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -56,8 +56,8 @@
 #include <windows.h>
 #endif
 
-using namespace lightllm;
-using namespace lightllm::engine;
+using namespace nanoinfer;
+using namespace nanoinfer::engine;
 
 // ============================================================================
 // UTF-8 console helper
@@ -688,7 +688,7 @@ int main(int argc, char** argv) {
     enable_utf8_console();
 
     printf("=============================================================\n");
-    printf("  LightLLM — Speculative Decode End-to-End Tests\n");
+    printf("  NanoInfer — Speculative Decode End-to-End Tests\n");
     printf("  Model: %s\n", model_dir);
     printf("=============================================================\n");
 

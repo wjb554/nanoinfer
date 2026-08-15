@@ -1,4 +1,4 @@
-# LightLLM
+# NanoInfer
 
 从零构建的 C++/CUDA LLM 推理引擎，对标 vLLM/SGLang。
 
@@ -97,8 +97,8 @@ cd ..  # 回到项目根目录
 ## 项目结构
 
 ```
-lightllm/
-├── include/lightllm/
+nanoinfer/
+├── include/nanoinfer/
 │   ├── tensor.h              # GPU Tensor 抽象
 │   ├── ops/                  # 算子层 (gemm, norm, rope, attention, sampling, ...)
 │   ├── kv_cache/             # PagedAttention + BlockAllocator + PrefixCache
@@ -151,7 +151,7 @@ lightllm/
 ### Radix Tree 前缀缓存
 
 SGLang 风格的 token 级前缀匹配，支持节点分裂、ref_count 共享、LRU 淘汰。
-可通过环境变量配置：`LIGHTLLM_PREFIX_CACHE=hash|radix`。
+可通过环境变量配置：`NANOINFER_PREFIX_CACHE=hash|radix`。
 
 ### Continuous Batching
 

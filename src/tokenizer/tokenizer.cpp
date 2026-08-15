@@ -1,6 +1,6 @@
 /// Tokenizer — HuggingFace tokenizer.json loader (GPT-2 BPE).
 /// Supports decode (token IDs → text) and encode (text → token IDs via BPE).
-#include "lightllm/tokenizer/tokenizer.h"
+#include "nanoinfer/tokenizer/tokenizer.h"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <set>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace tokenizer {
 
 // ---- JSON helpers ----
@@ -237,4 +237,4 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
 }
 
 }  // namespace tokenizer
-}  // namespace lightllm
+}  // namespace nanoinfer

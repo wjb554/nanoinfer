@@ -1,9 +1,9 @@
-#include "lightllm/allocator.h"
+#include "nanoinfer/allocator.h"
 
 #include <cuda_runtime.h>
 #include <stdexcept>
 
-namespace lightllm {
+namespace nanoinfer {
 
 CudaAllocator::CudaAllocator(size_t /*pool_size_bytes*/) {
     // TODO Phase 1b: set up cudaMemPool when pool_size > 0
@@ -35,4 +35,4 @@ void CudaAllocator::deallocate(void* ptr) {
     }
 }
 
-}  // namespace lightllm
+}  // namespace nanoinfer

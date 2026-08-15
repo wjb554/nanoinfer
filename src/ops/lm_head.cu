@@ -1,13 +1,13 @@
-/// GPU lm_head kernel — see include/lightllm/ops/lm_head.h for architecture docs.
-#include "lightllm/ops/lm_head.h"
-#include "lightllm/ops/dispatch.h"
-#include "lightllm/ops/gemm.h"
+/// GPU lm_head kernel — see include/nanoinfer/ops/lm_head.h for architecture docs.
+#include "nanoinfer/ops/lm_head.h"
+#include "nanoinfer/ops/dispatch.h"
+#include "nanoinfer/ops/gemm.h"
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <stdexcept>
 #include <string>
 
-namespace lightllm {
+namespace nanoinfer {
 namespace ops {
 
 // ---------------------------------------------------------------------------
@@ -88,4 +88,4 @@ Tensor lm_head_logits(const Tensor& h, const Tensor& embed) {
 }
 
 }  // namespace ops
-}  // namespace lightllm
+}  // namespace nanoinfer
