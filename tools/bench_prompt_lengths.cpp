@@ -159,6 +159,11 @@ int main(int argc, char** argv) {
         std::vector<int> prompt = use_chat ? wrap_chat_template(user_msg) : content;
         int eos = use_chat ? 151645 : 151643;       // chat: stop at <|im_end|>; else Qwen EOS
 
+        // Isolate each length: the shared EngineServer retains the hash prefix
+        // cache across runs, and sequential lengths (which share the corpus
+        // prefix) would reuse stale blocks and corrupt later runs' output.
+        engine.clear_kv_cache();
+
         // One request through BatchMainLoop.
         BatchMainLoop loop(engine, SchedulerPolicy::FCFS, /*chunk_size=*/16, max_batch_tokens);
         int id = loop.submit(prompt, max_new, eos, "", "", temperature);
