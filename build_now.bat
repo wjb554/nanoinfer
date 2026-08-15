@@ -22,7 +22,7 @@ if %errorlevel% neq 0 (
 echo       OK
 
 echo [2/4] Configuring CMake...
-cd /d "D:\ai infra project\nanoinfer"
+cd /d "%~dp0"
 if not exist build mkdir build
 cd build
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release >nul 2>&1
