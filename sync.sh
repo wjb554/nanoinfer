@@ -22,7 +22,7 @@
 # ---------- 配置（改这里） ----------
 REMOTE="root@YOUR_AUTODL_HOST"   # SSH 地址（AutoDL 控制台获取）
 PORT=YOUR_PORT                   # SSH 端口（AutoDL 控制台获取）
-REMOTE_PATH="~/NanoInfer"            # 服务器上的项目路径
+REMOTE_PATH="/root/autodl-tmp/NanoInfer"            # 服务器上的项目路径
 ARCH="89"                           # GPU 算力: 89=4090, 80=A100, 90=H800, 86=3090, 75=2060
 CUDA_PATH="/usr/local/cuda"         # 服务器 CUDA 工具链路径（nvcc 所在目录的上级）
 # -----------------------------------

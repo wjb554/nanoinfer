@@ -33,7 +33,11 @@ public:
 private:
     std::vector<std::string> id_to_token_;
     std::unordered_map<std::string, int> token_to_id_;
-    std::vector<std::pair<std::string,std::string>> merges_; // BPE merges
+    std::vector<std::pair<std::string,std::string>> merges_; // BPE merges (rank order)
+    // rank lookup: key = "a b" (tokens never contain a literal space; the byte
+    // for space is mapped to the "Ġ" unicode char, not a space).  O(1) per pair
+    // vs a linear scan over 151387 merges (which made long-text encode hang).
+    std::unordered_map<std::string, int> merge_rank_;
     std::unordered_map<std::string, unsigned char> byte_decoder_;
 };
 

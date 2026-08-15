@@ -5,6 +5,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <cstring>
+#include <chrono>
 #include <algorithm>
 #include <set>
 
@@ -98,29 +99,44 @@ Tokenizer::Tokenizer(const std::string& path) {
     }
 
     // ---- Parse merges (for BPE encoding) ----
+    // NOTE: merge strings may contain a literal double-quote token (e.g. a
+    // merge of " and some other byte), which is JSON-escaped as \" inside the
+    // string.  The content reader MUST handle backslash escapes, otherwise it
+    // stops at the escaped quote, mis-parses, and truncates the merge list
+    // (previously only ~1004 of 151387 merges were loaded -> tokenizer
+    // over-split every word).  Also: ']' inside a string is content, not the
+    // array terminator.
     pos = json.find("\"merges\"");
     if (pos != std::string::npos) {
         pos = json.find('[', pos);
         if (pos != std::string::npos) {
             pos++;
             while (pos < json.size() && json[pos] != ']') {
-                while (pos < json.size() && json[pos] != '"') { if (json[pos]==']') goto done_merges; pos++; }
+                while (pos < json.size() && json[pos] != '"') {
+                    if (json[pos] == ']') goto done_merges;  // ] between strings = array end
+                    pos++;
+                }
                 if (pos >= json.size()) break;
-                pos++; // skip opening "
-                size_t start = pos;
-                while (pos < json.size() && json[pos] != '"') pos++;
-                std::string merge = json.substr(start, pos-start);
-                if (pos < json.size()) pos++;
+                pos++;  // skip opening "
+                std::string merge;
+                while (pos < json.size()) {
+                    char ch = json[pos];
+                    if (ch == '\\' && pos + 1 < json.size()) { merge += json[pos + 1]; pos += 2; }
+                    else if (ch == '"') { pos++; break; }
+                    else { merge += ch; pos++; }
+                }
                 // Merge format: "token_a token_b" (space-separated)
                 size_t sp = merge.find(' ');
                 if (sp != std::string::npos) {
-                    std::string a = merge.substr(0, sp), b = merge.substr(sp+1);
-                    merges_.push_back({a, b});
+                    merges_.push_back({merge.substr(0, sp), merge.substr(sp + 1)});
                 }
             }
             done_merges:;
         }
     }
+    // Build O(1) rank lookup for the (now complete) merge list.
+    for (size_t r = 0; r < merges_.size(); r++)
+        merge_rank_[merges_[r].first + " " + merges_[r].second] = static_cast<int>(r);
 
     if (id_to_token_.empty()) throw std::runtime_error("tokenizer.json: empty vocab");
 
@@ -200,12 +216,13 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
     // repeat — because merging a low-rank pair can create a new pair that must
     // be merged before lower ranks.  A single rank-ordered pass over all merges
     // is WRONG and produces character-level tokens.
+    auto t0 = std::chrono::steady_clock::now();
     auto rank_of = [&](const std::string& a, const std::string& b) {
-        for (size_t r = 0; r < merges_.size(); r++)
-            if (merges_[r].first == a && merges_[r].second == b)
-                return static_cast<int>(r);
-        return -1;
+        auto it = merge_rank_.find(a + " " + b);
+        return it != merge_rank_.end() ? it->second : -1;
     };
+    int rounds = 0;
+    (void)rounds;
     for (;;) {
         int best_rank = -1;
         size_t best_i = 0;

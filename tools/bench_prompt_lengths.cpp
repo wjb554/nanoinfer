@@ -65,9 +65,28 @@ static std::string build_corpus(int target_tokens) {
     return corpus;
 }
 
+// ---- Qwen2.5 chat template wrapper -----------------------------------------
+// The C++ tokenizer cannot encode the <|im_start|>/<|im_end|> special tokens
+// (they live in added_tokens, not model.vocab), but the ENGINE accepts arbitrary
+// token IDs.  Wrapping the user content in the chat template via explicit IDs
+// makes Qwen2.5-Instruct produce coherent output (otherwise it degrades into
+// repetition on bare prose).  Token IDs are fixed for the Qwen2.5 family:
+//   151644=<|im_start|>  151645=<|im_end|>  872=user  77091=assistant  198=\n
+static std::vector<int> wrap_chat_template(const std::vector<int>& content) {
+    std::vector<int> t;
+    // <|im_start|>user\n{content}<|im_end|>\n<|im_start|>assistant\n
+    t.insert(t.end(), {151644, 872, 198});              // <|im_start|>user\n
+    t.insert(t.end(), content.begin(), content.end());  // {content}
+    t.insert(t.end(), {151645, 198});                   // <|im_end|>\n
+    t.insert(t.end(), {151644, 77091, 198});            // <|im_start|>assistant\n
+    return t;
+}
+
 int main(int argc, char** argv) {
     const char* model_dir = "models/qwen2.5-7b";
     bool use_fp16 = false;
+    bool use_chat = false;      // wrap prompts in the Qwen2.5 chat template
+    std::string chat_task;      // optional instruction prefix (e.g. "Summarize the following text: ")
     int  max_new = 100;
     float temperature = 0.0f;   // greedy (deterministic) by default
     int  max_batch_tokens = 0;
@@ -77,6 +96,8 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         if      (!strcmp(argv[i], "--model") && i+1 < argc)           model_dir = argv[++i];
         else if (!strcmp(argv[i], "--fp16"))                          use_fp16 = true;
+        else if (!strcmp(argv[i], "--chat"))                          use_chat = true;
+        else if (!strcmp(argv[i], "--chat-task") && i+1 < argc)       chat_task = argv[++i];
         else if (!strcmp(argv[i], "--max-new") && i+1 < argc)         max_new = std::atoi(argv[++i]);
         else if (!strcmp(argv[i], "--temp") && i+1 < argc)            temperature = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "--max-batch-tokens") && i+1<argc)  max_batch_tokens = std::atoi(argv[++i]);
@@ -111,10 +132,12 @@ int main(int argc, char** argv) {
     if (!logf) { fprintf(stderr, "cannot open %s\n", out_file.c_str()); return 1; }
 
     fprintf(logf, "# NanoInfer prompt-length latency report\n");
-    fprintf(logf, "# model=%s fp16=%d max_new=%d\n", model_dir, use_fp16 ? 1 : 0, max_new);
+    fprintf(logf, "# model=%s fp16=%d max_new=%d chat=%d\n",
+            model_dir, use_fp16 ? 1 : 0, max_new, use_chat ? 1 : 0);
     fprintf(logf, "# GPU auto (server RTX 4090)\n\n");
 
-    printf("=== Prompt-Length Latency (%d output tokens each) ===\n", max_new);
+    printf("=== Prompt-Length Latency (%d output tokens each%s) ===\n",
+           max_new, use_chat ? ", chat template" : "");
     printf("%-8s %10s %10s %10s %10s %10s\n",
            "prompt", "TTFT(ms)", "TPOT(ms)", "total(ms)", "gen_tok/s", "e2e_tok/s");
     printf("%-8s %10s %10s %10s %10s %10s\n",
@@ -125,12 +148,20 @@ int main(int argc, char** argv) {
             fprintf(stderr, "skip L=%d (corpus too short)\n", L);
             continue;
         }
-        std::vector<int> prompt(corpus_toks.begin(), corpus_toks.begin() + L);
-        std::string in_text = tok.decode(prompt);
+        std::vector<int> content(corpus_toks.begin(), corpus_toks.begin() + L);
+        std::vector<int> user_msg = content;
+        std::string in_text = tok.decode(content);  // record the user content, not the template tokens
+        if (use_chat && !chat_task.empty()) {
+            auto task_toks = tok.encode(chat_task);
+            user_msg.insert(user_msg.begin(), task_toks.begin(), task_toks.end());
+            in_text = chat_task + in_text;
+        }
+        std::vector<int> prompt = use_chat ? wrap_chat_template(user_msg) : content;
+        int eos = use_chat ? 151645 : 151643;       // chat: stop at <|im_end|>; else Qwen EOS
 
         // One request through BatchMainLoop.
         BatchMainLoop loop(engine, SchedulerPolicy::FCFS, /*chunk_size=*/16, max_batch_tokens);
-        int id = loop.submit(prompt, max_new, /*eos=*/151643, "", "", temperature);
+        int id = loop.submit(prompt, max_new, eos, "", "", temperature);
         loop.run();
 
         auto gen = loop.generated_tokens(id);
