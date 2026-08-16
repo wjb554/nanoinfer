@@ -40,7 +40,7 @@ endif()
 find_package(CUDAToolkit REQUIRED)
 
 # ---- xgrammar (structured output / constrained decoding) ----
-# Git submodule at third_party/xgrammar/ (v0.2.5)
+# Vendored at third_party/xgrammar/ (v0.2.5 + Python-bindings-off patch)
 set(XGRAMMAR_BUILD_PYTHON_BINDINGS OFF CACHE BOOL "" FORCE)
 set(XGRAMMAR_BUILD_CXX_TESTS OFF CACHE BOOL "" FORCE)
 set(XGRAMMAR_ENABLE_CPPTRACE OFF CACHE BOOL "" FORCE)
