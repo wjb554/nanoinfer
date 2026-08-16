@@ -193,6 +193,18 @@ add_executable(quick_generate tools/quick_generate.cpp)
 target_link_libraries(quick_generate PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(quick_generate PRIVATE include)
 
+add_executable(test_fp8 tools/test_fp8.cu)
+target_link_libraries(test_fp8 PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
+target_include_directories(test_fp8 PRIVATE include)
+
+add_executable(bench_batch_quality tools/bench_batch_quality.cpp)
+target_link_libraries(bench_batch_quality PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
+target_include_directories(bench_batch_quality PRIVATE include)
+
+add_executable(bench_fp8_gemm tools/bench_fp8_gemm.cpp)
+target_link_libraries(bench_fp8_gemm PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
+target_include_directories(bench_fp8_gemm PRIVATE include)
+
 add_executable(dump_weight tools/dump_weight.cpp)
 target_link_libraries(dump_weight PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(dump_weight PRIVATE include)

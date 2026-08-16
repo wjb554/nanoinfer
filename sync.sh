@@ -20,11 +20,11 @@
 # ============================================================
 
 # ---------- 配置（改这里） ----------
-REMOTE="root@YOUR_AUTODL_HOST"   # SSH 地址（AutoDL 控制台获取）
-PORT=YOUR_PORT                   # SSH 端口（AutoDL 控制台获取）
+REMOTE="root@connect.nmb1.seetacloud.com"   # SSH 地址（AutoDL 控制台获取）
+PORT=21858                   # SSH 端口（AutoDL 控制台获取）
 REMOTE_PATH="/root/autodl-tmp/NanoInfer"            # 服务器上的项目路径
 ARCH="89"                           # GPU 算力: 89=4090, 80=A100, 90=H800, 86=3090, 75=2060
-CUDA_PATH="/usr/local/cuda"         # 服务器 CUDA 工具链路径（nvcc 所在目录的上级）
+CUDA_PATH="/root/miniconda3/envs/cuda12"  # 服务器 CUDA 工具链（conda cuda12, nvcc 13.3）
 # -----------------------------------
 
 set -e
@@ -84,6 +84,7 @@ ssh -p "${PORT}" "${REMOTE}" "
   set -e
   export PATH=${CUDA_PATH}/bin:\$PATH
   export CUDA_HOME=${CUDA_PATH}
+  export LD_LIBRARY_PATH=${CUDA_PATH}/lib:${CUDA_PATH}/targets/x86_64-linux/lib:\$LD_LIBRARY_PATH
   cd ${REMOTE_PATH}
   if [ -f build/build.ninja ]; then
     echo '    [增量] ninja'

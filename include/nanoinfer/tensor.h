@@ -11,26 +11,28 @@
 
 namespace nanoinfer {
 
-enum class DType : uint8_t { F32 = 0, F16 = 1, BF16 = 2, I32 = 3 };
+enum class DType : uint8_t { F32 = 0, F16 = 1, BF16 = 2, I32 = 3, FP8_E4M3 = 4 };
 
 enum class Device : uint8_t { CPU = 0, CUDA = 1 };
 
 inline const char* dtype_name(DType dt) {
     switch (dt) {
-        case DType::F32:  return "f32";
-        case DType::F16:  return "f16";
-        case DType::BF16: return "bf16";
-        case DType::I32:  return "i32";
+        case DType::F32:     return "f32";
+        case DType::F16:     return "f16";
+        case DType::BF16:    return "bf16";
+        case DType::I32:     return "i32";
+        case DType::FP8_E4M3: return "fp8_e4m3";
     }
     return "unknown";
 }
 
 inline size_t dtype_size(DType dt) {
     switch (dt) {
-        case DType::F32:  return 4;
-        case DType::F16:  return 2;
-        case DType::BF16: return 2;
-        case DType::I32:  return 4;
+        case DType::F32:     return 4;
+        case DType::F16:     return 2;
+        case DType::BF16:    return 2;
+        case DType::I32:     return 4;
+        case DType::FP8_E4M3: return 1;
     }
     return 0;
 }
