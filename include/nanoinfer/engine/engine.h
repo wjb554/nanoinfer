@@ -221,6 +221,7 @@ public:
                  kv_cache::PrefixCachePolicy prefix_cache_policy
                      = kv_cache::prefix_cache_policy_from_env(),
                  bool use_fp16 = false,
+                 bool use_fp8 = false,      // FP8 weight-only (E4M3)
                  bool budget_from_free = false);
 
     // Defined in engine_server.cpp (needs xgrammar complete types for unique_ptr)
@@ -311,8 +312,9 @@ public:
     /// that corrupted output identity).
     ///
     /// Row i occupies absolute position `start_pos + i`, attends to positions
-    /// 0..start_pos+i-1 (decode convention, self excluded), and its K/V is
-    /// written BEFORE the batched attention so later rows see earlier KV.
+    /// 0..start_pos+i (self included, matching step()'s decode convention), and
+    /// its K/V is written BEFORE the batched attention so later rows see
+    /// earlier KV.
     ///
     /// @param tokens       [k, D] hidden states on GPU (weight_dtype_)
     /// @param block_tables per-layer block table for this sequence
@@ -392,6 +394,10 @@ public:
     struct EngineLayerW {
         Tensor q,k,v,o,a_n,gate,up,down,m_n;
         Tensor qb,kb,vb;   // attention projection biases (Qwen2 keeps them)
+        // FP8 weight-only (E4M3): quantized weights + per-row scale.
+        // Filled only when use_fp8_ is true; the fp16 q,k,v,o,gate,up,down stay empty.
+        Tensor q_f8,k_f8,v_f8,o_f8,gate_f8,up_f8,down_f8;
+        Tensor q_s,k_s,v_s,o_s,gate_s,up_s,down_s;
     };
 
     /// Access the weights for a given layer (0-based).
@@ -424,6 +430,7 @@ private:
     int max_blocks_per_seq_;
     int kv_cache_mb_ = 0;
     bool use_fp16_ = false;
+    bool use_fp8_  = false;   // FP8 weight-only (E4M3); weights stored as fp8+scale
     /// When true, the KV pool budget is taken from the ACTUAL free GPU memory
     /// at construction (for a draft model created co-resident with a target),
     /// instead of the device-total-minus-weights heuristic for a standalone
@@ -466,6 +473,15 @@ private:
     std::unique_ptr<DraftEngine> draft_engine_;
 
     // ---- Internal helpers ----
+    /// Layer GEMM dispatching on weight precision: fp8 weight-only (fused
+    /// dequant) vs fp16 (cuBLAS tensor core) vs fp32.  w_f16 is the fp16 weight
+    /// (empty in fp8 mode); w_f8/w_s are the fp8 weights + per-row scale.
+    /// fp32_out=true for q/k/v (attention wants F32); false for o/gate/up/down
+    /// (residual add needs weight_dtype_, i.e. F16 in fp16/fp8 modes).
+    Tensor layer_gemm(const Tensor& h, const Tensor& w_f16,
+                      const Tensor& w_f8, const Tensor& w_s,
+                      bool fp32_out) const;
+
     void scatter_prefill_kv(int layer,
                             const Tensor& k_contig,
                             const Tensor& v_contig,

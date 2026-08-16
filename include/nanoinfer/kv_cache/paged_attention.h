@@ -33,7 +33,8 @@ Tensor paged_attention(
     const int* block_table,
     int max_blocks_per_seq,
     const int* seq_lens,
-    class BlockAllocator& allocator);
+    class BlockAllocator& allocator,
+    int max_seq_hint = -1);
 
 // ---------------------------------------------------------------------------
 // Prefill PagedAttention — single request, P-token chunk

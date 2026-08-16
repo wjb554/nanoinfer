@@ -536,7 +536,7 @@ __global__ void paged_attention_reduce_kernel(
 // =========================================================================
 Tensor paged_attention(
     const Tensor& q, const int* block_table, int max_blocks,
-    const int* seq_lens, BlockAllocator& allocator)
+    const int* seq_lens, BlockAllocator& allocator, int max_seq_hint)
 {
     int T = q.size(0), Hq = q.size(1), Hkv = allocator.num_kv_heads(), D = q.size(2);
 
@@ -551,8 +551,14 @@ Tensor paged_attention(
     if (bdim < 32) bdim = 32;
 
     // ---- Compute actual max sequence length from seq_lens (GPU ptr -> CPU) ----
+    // When the caller already knows the max seq len (it computed seq_lens on
+    // the host), pass it via max_seq_hint to skip this SYNCHRONOUS D2H copy.
+    // This D2H drained the whole stream once per layer and dominated the
+    // single-token speculative draft path (per-layer ~0.45ms fixed cost).
     int max_actual_seq = 0;
-    if (T > 0) {
+    if (max_seq_hint >= 0) {
+        max_actual_seq = max_seq_hint;
+    } else if (T > 0) {
         std::vector<int> h_seq_lens(T);
         cudaMemcpy(h_seq_lens.data(), seq_lens, T * sizeof(int), cudaMemcpyDeviceToHost);
         for (int t = 0; t < T; t++)

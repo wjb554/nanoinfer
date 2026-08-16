@@ -64,7 +64,12 @@ void Tensor::allocate() {
     if (bytes == 0) return;
 
     if (device_ == Device::CUDA) {
-        cuda_check(cudaMalloc(&data_, bytes), "cudaMalloc");
+        // Stream-ordered caching allocation (CUDA 11.2+): reuses freed blocks
+        // through the stream's memory pool instead of a driver round-trip per
+        // Tensor.  This eliminates the ~1000 cudaMalloc/cudaFree driver calls
+        // per speculative-draft step that made run_layers ~4-5x slower than the
+        // regular decode path (pure inference optimization, no training).
+        cuda_check(cudaMallocAsync(&data_, bytes, cudaStreamLegacy), "cudaMallocAsync");
     } else {
         data_ = std::malloc(bytes);
         if (!data_) throw std::bad_alloc();
@@ -74,7 +79,7 @@ void Tensor::allocate() {
 void Tensor::deallocate() {
     if (!data_) return;
     if (device_ == Device::CUDA) {
-        cudaFree(data_);
+        cudaFreeAsync(data_, cudaStreamLegacy);
     } else {
         std::free(data_);
     }

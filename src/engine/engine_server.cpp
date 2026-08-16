@@ -46,6 +46,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -335,6 +336,81 @@ static Tensor load_weight(SafetensorsLoader& l, const std::string& n,
     return use_fp16 ? load_f16(l, n) : load_f32(l, n);
 }
 
+/// Load a 2D weight as FP8 E4M3 (per-row scale).  Outputs the quantized
+/// weights [R,C] (uint8) and per-row scale [R] (f32).  For 1D tensors (not
+/// weights) returns empty tensors — callers keep those fp16/fp32.
+// Host-side E4M3 dequant (mirrors fp8_to_float in gemm.cu) for load-time checks.
+static inline float fp8_to_float_host(uint8_t b) {
+    uint32_t s = (b >> 7) & 1, e = (b >> 3) & 0xF, m = b & 7;
+    float v;
+    if (e == 0) v = (float)m * 0.001953125f;
+    else if (e == 0xF) v = (m == 7) ? NAN : (1.0f + (float)m / 8.0f) * 256.0f;
+    else v = (1.0f + (float)m / 8.0f) * exp2f((float)e - 7.0f);
+    return s ? -v : v;
+}
+
+static void load_fp8(SafetensorsLoader& l, const std::string& n,
+                     Tensor& out_f8, Tensor& out_scale) {
+    Tensor w = load_f16(l, n);
+    if (w.dims() != 2) { out_f8 = Tensor(); out_scale = Tensor(); return; }
+    ops::quantize_fp8(w, out_f8, out_scale);
+    if (n.find("self_attn.q_proj") != std::string::npos) {  // DEBUG round-trip check
+        int R = out_f8.size(0), C = out_f8.size(1);
+        std::vector<uint8_t> qh(R * C); out_f8.copy_to(qh.data(), qh.size());
+        std::vector<float> sh(R); out_scale.copy_to(sh.data(), R * sizeof(float));
+        std::vector<unsigned short> wh(R * C);
+        w.copy_to(wh.data(), R * C * sizeof(unsigned short));
+        double maxerr = 0;
+        for (int r = 0; r < 4; r++)
+            for (int c = 0; c < 4; c++) {
+                float deq = fp8_to_float_host(qh[r * C + c]) * sh[r];
+                float orig = __half2float(*(const __half*)&wh[r * C + c]);
+                maxerr = fmax(maxerr, fabs((double)deq - orig));
+            }
+        printf("FP8-DBG %s round-trip maxerr=%.5f scale[0]=%.2f\n",
+               n.c_str(), maxerr, sh[0]);
+    }
+}
+
+static Tensor cast_f32_to_f16(const Tensor& x);  // defined below (dtype helpers)
+
+// Layer GEMM dispatching on precision: fp8 weight-only (fused dequant),
+// fp16 (cuBLAS tensor core), or fp32.  fp32_out controls the output dtype:
+// q/k/v want F32 (attention); o/gate/up/down need weight_dtype_ (F16) so the
+// residual add matches (fp8 path casts the F32 GEMM result down).
+Tensor EngineServer::layer_gemm(const Tensor& h, const Tensor& w_f16,
+                                const Tensor& w_f8, const Tensor& w_s,
+                                bool fp32_out) const {
+    if (use_fp8_) {
+        // Route B (W8A8 fp8 tensor cores) by default; set NANOINFER_FP8_W8A16=1
+        // to fall back to Route A (dequant fp8→fp16, cuBLAS fp16 tensor cores).
+        static const bool fp8_w8a16 = [] {
+            const char* e = std::getenv("NANOINFER_FP8_W8A16");
+            return e && e[0] && e[0] != '0';
+        }();
+        // Effective W8A16: forced, or W8A8 unsupported (cuBLAS fp8 is Hopper-only;
+        // Ada RTX 4090 falls back to W8A16).
+        const bool use_w8a16 = fp8_w8a16 || !ops::fp8_w8a8_available();
+        // Decode (M==1): the dedicated split-K GEMV is 2.4-13x faster than the
+        // dequant+cuBLAS GEMM and numerically the same W8A16 dequant.
+        if (h.size(0) == 1 && use_w8a16) {
+            Tensor o = ops::gemv_f16_fp8(h, w_f8, w_s);
+            if (fp32_out) return o;
+            return cast_f32_to_f16(o);   // residual path wants weight_dtype_ (F16)
+        }
+        Tensor o = use_w8a16
+            ? ops::gemm_f16_fp8_cublas(h, w_f8, w_s, /*transpose_b=*/true)
+            : ops::gemm_f16_fp8_w8a8(h, w_f8, w_s, /*transpose_b=*/true);
+        if (fp32_out) return o;
+        return cast_f32_to_f16(o);   // residual path wants weight_dtype_ (F16)
+    }
+    if (weight_dtype_ == DType::F16) {
+        if (fp32_out) return ops::gemm_f16f32(h, w_f16, /*transpose_b=*/true);  // F32
+        return ops::gemm(h, w_f16, /*transpose_b=*/true);                       // F16
+    }
+    return ops::gemm(h, w_f16, /*transpose_b=*/true);
+}
+
 // ============================================================================
 // DType conversion helpers (F32 <-> F16)
 // ============================================================================
@@ -388,12 +464,14 @@ EngineServer::EngineServer(const std::string& model_dir,
                            int kv_cache_mb,
                            kv_cache::PrefixCachePolicy prefix_cache_policy,
                            bool use_fp16,
+                           bool use_fp8,
                            bool budget_from_free)
     : max_batch_tokens_(max_batch_tokens)
     , kv_cache_mb_(kv_cache_mb)
-    , use_fp16_(use_fp16)
+    , use_fp16_(use_fp8 || use_fp16)   // fp8 mode: activations/norms stay fp16
+    , use_fp8_(use_fp8)
     , budget_from_free_(budget_from_free)
-    , weight_dtype_(use_fp16 ? DType::F16 : DType::F32)
+    , weight_dtype_((use_fp8 || use_fp16) ? DType::F16 : DType::F32)
     , prefix_cache_policy_(prefix_cache_policy)
 {
     char buf[512];
@@ -432,40 +510,45 @@ EngineServer::EngineServer(const std::string& model_dir,
     printf("  prefix_cache=%s\n", kv_cache::prefix_cache_policy_name(prefix_cache_policy_));
     printf("Loading weights...\n");
 
-    embed_w_    = load_weight(loader, "model.embed_tokens.weight", use_fp16);
-    final_norm_ = load_weight(loader, "model.norm.weight", use_fp16);
+    embed_w_    = load_weight(loader, "model.embed_tokens.weight", use_fp16_);
+    final_norm_ = load_weight(loader, "model.norm.weight", use_fp16_);
     // Untied models (e.g. Qwen2.5-7B, tie_word_embeddings=false) have a
     // SEPARATE lm_head.weight that must be used for the final logits
     // projection.  Tied models share embed_tokens as the LM head.
     if (!cfg_.tie_word_embeddings) {
-        lm_head_w_ = load_weight(loader, "lm_head.weight", use_fp16);
+        lm_head_w_ = load_weight(loader, "lm_head.weight", use_fp16_);
         printf("  lm_head loaded (untied weights, tie_word_embeddings=false)\n");
     } else {
         printf("  lm_head tied to embed_tokens (tie_word_embeddings=true)\n");
     }
     for (int i = 0; i < n_layers_; i++) {
         auto ns = std::to_string(i);
-        layers_.push_back(std::make_unique<EngineLayerW>(EngineLayerW{
-            load_weight(loader, "model.layers."+ns+".self_attn.q_proj.weight", use_fp16),
-            load_weight(loader, "model.layers."+ns+".self_attn.k_proj.weight", use_fp16),
-            load_weight(loader, "model.layers."+ns+".self_attn.v_proj.weight", use_fp16),
-            load_weight(loader, "model.layers."+ns+".self_attn.o_proj.weight", use_fp16),
-            load_weight(loader, "model.layers."+ns+".input_layernorm.weight", use_fp16),
-            load_weight(loader, "model.layers."+ns+".mlp.gate_proj.weight", use_fp16),
-            load_weight(loader, "model.layers."+ns+".mlp.up_proj.weight", use_fp16),
-            load_weight(loader, "model.layers."+ns+".mlp.down_proj.weight", use_fp16),
-            load_weight(loader, "model.layers."+ns+".post_attention_layernorm.weight", use_fp16),
-            // Attention projection biases — Qwen2 keeps them; the GEMM outputs
-            // are always F32 so the biases are stored F32 regardless of
-            // use_fp16.  (Missing these biases corrupts q/k/v entirely.)
-            load_f32(loader, "model.layers."+ns+".self_attn.q_proj.bias"),
-            load_f32(loader, "model.layers."+ns+".self_attn.k_proj.bias"),
-            load_f32(loader, "model.layers."+ns+".self_attn.v_proj.bias"),
-        }));
+        auto L = std::make_unique<EngineLayerW>();
+        // Linear weights: fp8 (quantized) when use_fp8_, else fp16/fp32.
+        auto load_w = [&](const std::string& name, Tensor& f16, Tensor& f8, Tensor& s) {
+            if (use_fp8_) load_fp8(loader, name, f8, s);
+            else          f16 = load_weight(loader, name, use_fp16_);
+        };
+        load_w("model.layers."+ns+".self_attn.q_proj.weight", L->q, L->q_f8, L->q_s);
+        load_w("model.layers."+ns+".self_attn.k_proj.weight", L->k, L->k_f8, L->k_s);
+        load_w("model.layers."+ns+".self_attn.v_proj.weight", L->v, L->v_f8, L->v_s);
+        load_w("model.layers."+ns+".self_attn.o_proj.weight", L->o, L->o_f8, L->o_s);
+        load_w("model.layers."+ns+".mlp.gate_proj.weight", L->gate, L->gate_f8, L->gate_s);
+        load_w("model.layers."+ns+".mlp.up_proj.weight",   L->up,   L->up_f8,   L->up_s);
+        load_w("model.layers."+ns+".mlp.down_proj.weight", L->down, L->down_f8, L->down_s);
+        // RMSNorm weights stay fp16/fp32 (small, used by the norm op).
+        L->a_n = load_weight(loader, "model.layers."+ns+".input_layernorm.weight", use_fp16_);
+        L->m_n = load_weight(loader, "model.layers."+ns+".post_attention_layernorm.weight", use_fp16_);
+        // Attention projection biases — Qwen2 keeps them; stored F32.
+        L->qb = load_f32(loader, "model.layers."+ns+".self_attn.q_proj.bias");
+        L->kb = load_f32(loader, "model.layers."+ns+".self_attn.k_proj.bias");
+        L->vb = load_f32(loader, "model.layers."+ns+".self_attn.v_proj.bias");
+        layers_.push_back(std::move(L));
         if (i == 0 || i == n_layers_ - 1)
             printf("  layer %d loaded\n", i);
     }
-    printf("All weights loaded (%s on GPU)\n", use_fp16 ? "FP16" : "FP32");
+    printf("All weights loaded (%s on GPU)\n",
+           use_fp8_ ? "FP8 (weight-only)" : (use_fp16_ ? "FP16" : "FP32"));
 
     // KV pool sizing: clamp the len-derived pool to what the GPU can actually
     // hold.  Without this, a large config max_position_embeddings (e.g.
@@ -922,15 +1005,73 @@ Tensor EngineServer::run_layers(
     int half_hd = hd_ / 2;
     int max_blocks = max_blocks_per_seq_;
 
+    // TEMP diagnostic: NANOINFER_TRACE_RL=1 prints per-call breakdown.
+    const bool _tr = (std::getenv("NANOINFER_TRACE_RL") != nullptr);
+    auto _t0 = std::chrono::steady_clock::now();
+    double _t_attn = 0.0, _t_wkv = 0.0;
+    cudaEvent_t _gpu_e0 = nullptr, _gpu_e1 = nullptr;
+    if (_tr) { cudaEventCreate(&_gpu_e0); cudaEventCreate(&_gpu_e1); }
+
     Tensor h({T, D_}, weight_dtype_, Device::CUDA);
     size_t h_row_bytes = static_cast<size_t>(D_) * dtype_size(weight_dtype_);
     cudaMemcpy(h.raw(), hidden.raw(), static_cast<size_t>(T) * h_row_bytes,
                cudaMemcpyDeviceToDevice);
 
 
-    // Row i attends to positions 0..start_pos+i-1 (decode convention).
+    // Row i attends to positions 0..start_pos+i (SELF INCLUDED) — the same
+    // decode convention as step() (which sets lens = seq_len+1).  Self-attention
+    // is required to match the model: the missing +1 made the spec draft/verify
+    // path self-exclude, so it diverged from normal decode even at 100%
+    // acceptance (draft and verify shared the same wrong convention).
     std::vector<int> seq_lens(T);
-    for (int i = 0; i < T; i++) seq_lens[i] = start_pos + i;
+    for (int i = 0; i < T; i++) seq_lens[i] = start_pos + i + 1;
+
+    // ===== Hoisted per-call scratch (invariant across layers) =====
+    // RoPE cos/sin depend only on (start_pos, T, hd_), NOT on the layer.
+    // The block table and seq lens are also identical for every layer
+    // (lockstep allocation).  Computing them once and reusing instead of
+    // per-layer device allocations + H2D copies + a full sync was the
+    // dominant cost of the speculative draft path (k separate single-token
+    // forwards × n_layers allocations each).
+    Tensor cos({T, half_hd}, DType::F32, Device::CUDA);
+    Tensor sin({T, half_hd}, DType::F32, Device::CUDA);
+    {
+        std::vector<float> vc(static_cast<size_t>(T) * half_hd);
+        std::vector<float> vs(static_cast<size_t>(T) * half_hd);
+        for (int t = 0; t < T; t++) {
+            int pos = start_pos + t;
+            for (int d = 0; d < half_hd; d++) {
+                float theta = static_cast<float>(pos)
+                    / powf(cfg_.rope_theta, 2.0f * d / hd_);
+                size_t idx = static_cast<size_t>(t) * half_hd + d;
+                vc[idx] = cosf(theta);
+                vs[idx] = sinf(theta);
+            }
+        }
+        cos.copy_from(vc.data(), cos.nbytes());
+        sin.copy_from(vs.data(), sin.nbytes());
+    }
+
+    std::vector<int> h_bt(static_cast<size_t>(T) * max_blocks, -1);
+    if (!block_tables_abs.empty()) {
+        const auto& bt = block_tables_abs[
+            start_layer < static_cast<int>(block_tables_abs.size())
+                ? start_layer : 0];
+        int bt_len = static_cast<int>(bt.size());
+        for (int i = 0; i < T; i++)
+            for (int b = 0; b < bt_len && b < max_blocks; b++)
+                h_bt[static_cast<size_t>(i) * max_blocks + b] = bt[b];
+    }
+    Tensor d_bt({T * max_blocks}, DType::I32, Device::CUDA);
+    d_bt.copy_from(h_bt.data(), h_bt.size() * sizeof(int));
+    Tensor d_sl({T}, DType::I32, Device::CUDA);
+    d_sl.copy_from(seq_lens.data(), T * sizeof(int));
+
+    // Reused per-row K/V scratch (avoids a device allocation per row).
+    Tensor k_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
+    Tensor v_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
+
+    if (_tr) cudaEventRecord(_gpu_e0);
 
     int end_layer = start_layer + num_layers;
     for (int l = start_layer; l < end_layer && l < n_layers_; l++) {
@@ -943,13 +1084,13 @@ Tensor EngineServer::run_layers(
         // --- Q / K / V projection (batched) ---
         Tensor q, k, v;
         if (weight_dtype_ == DType::F16) {
-            q = gemm_f16f32(normed, L.q, true);
-            k = gemm_f16f32(normed, L.k, true);
-            v = gemm_f16f32(normed, L.v, true);
+            q = layer_gemm(normed, L.q, L.q_f8, L.q_s, true);
+            k = layer_gemm(normed, L.k, L.k_f8, L.k_s, true);
+            v = layer_gemm(normed, L.v, L.v_f8, L.v_s, true);
         } else {
-            q = gemm(normed, L.q, true);
-            k = gemm(normed, L.k, true);
-            v = gemm(normed, L.v, true);
+            q = layer_gemm(normed, L.q, L.q_f8, L.q_s, true);
+            k = layer_gemm(normed, L.k, L.k_f8, L.k_s, true);
+            v = layer_gemm(normed, L.v, L.v_f8, L.v_s, true);
         }
         // Qwen2 keeps attention-projection biases (see EngineLayerW).
         ops::add_bias_inplace(q, L.qb);
@@ -959,63 +1100,36 @@ Tensor EngineServer::run_layers(
         k.reshape_inplace({T, Hkv_, hd_});
         v.reshape_inplace({T, Hkv_, hd_});
 
-        // --- RoPE at positions [start_pos, start_pos+T-1] ---
-        {
-            std::vector<float> vc(static_cast<size_t>(T) * half_hd);
-            std::vector<float> vs(static_cast<size_t>(T) * half_hd);
-            for (int t = 0; t < T; t++) {
-                int pos = start_pos + t;
-                for (int d = 0; d < half_hd; d++) {
-                    float theta = static_cast<float>(pos)
-                        / powf(cfg_.rope_theta, 2.0f * d / hd_);
-                    size_t idx = static_cast<size_t>(t) * half_hd + d;
-                    vc[idx] = cosf(theta);
-                    vs[idx] = sinf(theta);
-                }
-            }
-            Tensor cos({T, half_hd}, DType::F32, Device::CUDA);
-            Tensor sin({T, half_hd}, DType::F32, Device::CUDA);
-            cos.copy_from(vc.data(), cos.nbytes());
-            sin.copy_from(vs.data(), sin.nbytes());
-
-            rope(q, &k, cos, sin);
-        }
-        cudaDeviceSynchronize();
+        // --- RoPE (reuse hoisted cos/sin) ---
+        rope(q, &k, cos, sin);
 
         // --- Write K/V BEFORE attention so later rows see earlier rows' KV ---
         if (write_kv) {
+            auto _tw = std::chrono::steady_clock::now();
             size_t k_row_bytes = static_cast<size_t>(Hkv_) * hd_ * sizeof(float);
             for (int i = 0; i < T; i++) {
-                Tensor k_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
                 cudaMemcpy(k_new.raw(),
                            static_cast<const char*>(k.raw()) + i * k_row_bytes,
                            k_row_bytes, cudaMemcpyDeviceToDevice);
-                Tensor v_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
                 cudaMemcpy(v_new.raw(),
                            static_cast<const char*>(v.raw()) + i * k_row_bytes,
                            k_row_bytes, cudaMemcpyDeviceToDevice);
                 write_decode_kv(l, start_pos + i, k_new, v_new,
                                 block_tables_abs, alloc);
             }
+            _t_wkv += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - _tw).count();
         }
 
         // --- Batched paged attention (T rows of one sequence) ---
-        // Each row repeats the same per-layer block table (same sequence);
-        // seq_lens[i] = start_pos+i bounds each row's attention.
+        // Block table + seq lens are hoisted above (identical every layer).
         {
-            std::vector<int> h_bt(static_cast<size_t>(T) * max_blocks, -1);
-            const auto& bt = block_tables_abs[l];
-            int bt_len = static_cast<int>(bt.size());
-            for (int i = 0; i < T; i++)
-                for (int b = 0; b < bt_len && b < max_blocks; b++)
-                    h_bt[static_cast<size_t>(i) * max_blocks + b] = bt[b];
-            Tensor d_bt({T * max_blocks}, DType::I32, Device::CUDA);
-            d_bt.copy_from(h_bt.data(), h_bt.size() * sizeof(int));
-            Tensor d_sl({T}, DType::I32, Device::CUDA);
-            d_sl.copy_from(seq_lens.data(), T * sizeof(int));
-
+            auto _ta = std::chrono::steady_clock::now();
             Tensor attn_out_3d = kv_cache::paged_attention(
-                q, d_bt.data<int>(), max_blocks, d_sl.data<int>(), alloc);
+                q, d_bt.data<int>(), max_blocks, d_sl.data<int>(), alloc,
+                start_pos + T);   // max seq len (seq_lens[i] = start_pos+i+1)
+            _t_attn += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - _ta).count();
 
             // --- O-projection + residual ---
             Tensor attn_2d = attn_out_3d.view({T, D_});
@@ -1025,18 +1139,31 @@ Tensor EngineServer::run_layers(
                 else
                     attn_2d = cast_f16_to_f32(attn_2d);
             }
-            attn_2d = gemm(attn_2d, L.o, true);
+            attn_2d = layer_gemm(attn_2d, L.o, L.o_f8, L.o_s, false);
             h = ops::add(h, attn_2d);
         }
 
         // --- MLP ---
         normed = rms_norm(h, L.m_n, cfg_.rms_norm_eps);
-        Tensor gate = gemm(normed, L.gate, true);
-        Tensor up   = gemm(normed, L.up,   true);
+        Tensor gate = layer_gemm(normed, L.gate, L.gate_f8, L.gate_s, false);
+        Tensor up   = layer_gemm(normed, L.up, L.up_f8, L.up_s, false);
         silu_inplace(gate);
         Tensor mlp = ops::mul(gate, up);
-        mlp = gemm(mlp, L.down, true);
+        mlp = layer_gemm(mlp, L.down, L.down_f8, L.down_s, false);
         h = ops::add(h, mlp);
+    }
+
+    if (_tr) {
+        cudaEventRecord(_gpu_e1);
+        cudaEventSynchronize(_gpu_e1);
+        float _gpu_ms = 0.0f;
+        cudaEventElapsedTime(&_gpu_ms, _gpu_e0, _gpu_e1);
+        double _total = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - _t0).count();
+        fprintf(stderr, "[rl] T=%d layers=%d wall=%.2fms gpu=%.2fms attn=%.2fms wkv=%.2fms other=%.2fms\n",
+                T, end_layer - start_layer, _total, (double)_gpu_ms, _t_attn, _t_wkv,
+                _total - _t_attn - _t_wkv);
+        cudaEventDestroy(_gpu_e0); cudaEventDestroy(_gpu_e1);
     }
 
     return h;
@@ -1104,7 +1231,8 @@ Tensor EngineServer::forward_batched(
 //
 // Position convention: after step(), state.seq_len == L and the base token
 // occupies position L (its K/V not yet written).  Row j of the verify input
-// sits at position L+j, attends to 0..L+j-1, and predicts D_{j+1} at L+j+1.
+// sits at position L+j, attends to 0..L+j (self included, matching step()
+// decode), and predicts D_{j+1} at L+j+1.
 
 void EngineServer::speculate(
     const ScheduleStep& step,
@@ -1648,13 +1776,13 @@ std::vector<SampledToken> EngineServer::step(
         // the standard gemm() which auto-detects dtype from inputs.
         Tensor q_flat, k_flat, v_flat;
         if (weight_dtype_ == DType::F16) {
-            q_flat = gemm_f16f32(normed, L.q, true);  // F16+F16 -> F32
-            k_flat = gemm_f16f32(normed, L.k, true);
-            v_flat = gemm_f16f32(normed, L.v, true);
+            q_flat = layer_gemm(normed, L.q, L.q_f8, L.q_s, true);  // F16+F16 -> F32
+            k_flat = layer_gemm(normed, L.k, L.k_f8, L.k_s, true);
+            v_flat = layer_gemm(normed, L.v, L.v_f8, L.v_s, true);
         } else {
-            q_flat = gemm(normed, L.q, true);  // [T, Hq*hd]
-            k_flat = gemm(normed, L.k, true);  // [T, Hkv*hd]
-            v_flat = gemm(normed, L.v, true);  // [T, Hkv*hd]
+            q_flat = layer_gemm(normed, L.q, L.q_f8, L.q_s, true);  // [T, Hq*hd]
+            k_flat = layer_gemm(normed, L.k, L.k_f8, L.k_s, true);  // [T, Hkv*hd]
+            v_flat = layer_gemm(normed, L.v, L.v_f8, L.v_s, true);  // [T, Hkv*hd]
         }
         // Qwen2 keeps attention-projection biases; without them q/k/v are
         // wrong (bias magnitude ~100) and attention output is garbage.
@@ -1949,12 +2077,15 @@ std::vector<SampledToken> EngineServer::step(
                                       N * sizeof(int));
 
             // ONE kernel call for all decode entries
+            int max_decode_len = 0;
+            for (int j = 0; j < N; j++) max_decode_len = std::max(max_decode_len, lens[j]);
             Tensor a_out = kv_cache::paged_attention(
                 q_all,
                 d_all_block_tables_.data<int>(),
                 max_blocks_per_seq_,
                 d_all_seq_lens_.data<int>(),
-                *kv_allocators_[l]);
+                *kv_allocators_[l],
+                max_decode_len);   // max seq len hint, skips the per-layer D2H
 
             // Copy attention output row j back to the flat tensor
             for (int j = 0; j < N; j++) {
@@ -1980,16 +2111,16 @@ std::vector<SampledToken> EngineServer::step(
                 attn_out_2d = cast_f16_to_f32(attn_out_2d);
             }
         }
-        attn_out_2d = gemm(attn_out_2d, L.o, true);
+        attn_out_2d = layer_gemm(attn_out_2d, L.o, L.o_f8, L.o_s, false);
         h = ops::add(h, attn_out_2d);
 
         // --- 3f. MLP (batched) ---
         normed = rms_norm(h, L.m_n, cfg_.rms_norm_eps);
-        Tensor gate = gemm(normed, L.gate, true);
-        Tensor up   = gemm(normed, L.up, true);
+        Tensor gate = layer_gemm(normed, L.gate, L.gate_f8, L.gate_s, false);
+        Tensor up   = layer_gemm(normed, L.up, L.up_f8, L.up_s, false);
         silu_inplace(gate);
         Tensor mlp = ops::mul(gate, up);
-        mlp = gemm(mlp, L.down, true);
+        mlp = layer_gemm(mlp, L.down, L.down_f8, L.down_s, false);
         h = ops::add(h, mlp);
     }
 
@@ -2293,13 +2424,13 @@ Tensor EngineServer::forward_n_layers(int n,
         // the standard gemm() auto-detects dtypes and works correctly.
         Tensor q_flat, k_flat, v_flat;
         if (weight_dtype_ == DType::F16) {
-            q_flat = gemm_f16f32(normed, L.q, true);
-            k_flat = gemm_f16f32(normed, L.k, true);
-            v_flat = gemm_f16f32(normed, L.v, true);
+            q_flat = layer_gemm(normed, L.q, L.q_f8, L.q_s, true);
+            k_flat = layer_gemm(normed, L.k, L.k_f8, L.k_s, true);
+            v_flat = layer_gemm(normed, L.v, L.v_f8, L.v_s, true);
         } else {
-            q_flat = gemm(normed, L.q, true);
-            k_flat = gemm(normed, L.k, true);
-            v_flat = gemm(normed, L.v, true);
+            q_flat = layer_gemm(normed, L.q, L.q_f8, L.q_s, true);
+            k_flat = layer_gemm(normed, L.k, L.k_f8, L.k_s, true);
+            v_flat = layer_gemm(normed, L.v, L.v_f8, L.v_s, true);
         }
 
         q_flat.reshape_inplace({T, Hq_, hd_});
@@ -2352,7 +2483,7 @@ Tensor EngineServer::forward_n_layers(int n,
         // ---------------------------------------------------------------
         // 5. O-projection + first residual
         // ---------------------------------------------------------------
-        attn_out = gemm(attn_out, L.o, true);
+        attn_out = layer_gemm(attn_out, L.o, L.o_f8, L.o_s, false);
         x = ops::add(x, attn_out);
 
         // ---------------------------------------------------------------
@@ -2360,11 +2491,11 @@ Tensor EngineServer::forward_n_layers(int n,
         //    → second residual
         // ---------------------------------------------------------------
         normed = rms_norm(x, L.m_n, cfg_.rms_norm_eps);
-        Tensor gate = gemm(normed, L.gate, true);
-        Tensor up   = gemm(normed, L.up,   true);
+        Tensor gate = layer_gemm(normed, L.gate, L.gate_f8, L.gate_s, false);
+        Tensor up   = layer_gemm(normed, L.up, L.up_f8, L.up_s, false);
         silu_inplace(gate);
         Tensor mlp = ops::mul(gate, up);
-        mlp = gemm(mlp, L.down, true);
+        mlp = layer_gemm(mlp, L.down, L.down_f8, L.down_s, false);
         x = ops::add(x, mlp);
     }
 
