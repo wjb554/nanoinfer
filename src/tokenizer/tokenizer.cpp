@@ -48,23 +48,30 @@ static std::string extract_json_str(const std::string& json, size_t& pos) {
     return result;
 }
 
-// ---- Byte encoder (GPT-2 style) ----
+// ---- Byte encoder (GPT-2 style, matching HF/Qwen2.5) ----
 static const char* byte_to_unicode() {
-    // GPT-2 maps bytes 33-126 directly, remaps 0-32 and 127-255 to avoid control chars
+    // The standard GPT-2 byte-level scheme maps THREE ranges directly:
+    //   33-126  ('!'..'~'),  161-172 ('¡'..'¬'),  174-255 ('®'..'ÿ')
+    // and remaps the rest (0-32, 127-160, 173) to codepoints 256+.
+    // The old implementation only mapped 33-126 directly and remapped 127-255 too,
+    // which MISMATCHED the vocab: byte-encoded chars for high bytes (e.g. "å" for
+    // byte 0xE5) were not found by byte_decoder_, emitted as-is -> double-encoded
+    // (invalid UTF-8) decode, and Chinese/high-byte encode() produced no tokens.
     static char map[256][4] = {};
     static bool init = false;
     if (init) return (const char*)map;
     init = true;
-    // Printable range
-    for (int b = 33; b <= 126; b++) { map[b][0] = (char)b; map[b][1] = 0; }
-    // Remap others to unicode
+    auto encode_cp = [&](int b, int cp) {
+        if (cp < 0x80) { map[b][0] = (char)cp; map[b][1] = 0; }
+        else { map[b][0] = (char)(0xC0|cp>>6); map[b][1] = (char)(0x80|cp&0x3F); map[b][2] = 0; }
+    };
+    for (int b = 33; b <= 126; b++) encode_cp(b, b);
+    for (int b = 161; b <= 172; b++) encode_cp(b, b);
+    for (int b = 174; b <= 255; b++) encode_cp(b, b);
     int n = 0;
     for (int b = 0; b < 256; b++) {
-        if (b >= 33 && b <= 126) continue;
-        int cp = 256 + n++;
-        if (cp < 0x80) { map[b][0] = (char)cp; map[b][1] = 0; }
-        else if (cp < 0x800) { map[b][0] = (char)(0xC0|cp>>6); map[b][1] = (char)(0x80|cp&0x3F); map[b][2] = 0; }
-        else { map[b][0] = (char)(0xE0|cp>>12); map[b][1] = (char)(0x80|(cp>>6)&0x3F); map[b][2] = (char)(0x80|cp&0x3F); map[b][3] = 0; }
+        if (map[b][0] != 0) continue;
+        encode_cp(b, 256 + n++);
     }
     return (const char*)map;
 }
