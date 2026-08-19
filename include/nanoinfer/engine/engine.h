@@ -222,7 +222,7 @@ public:
                  int kv_cache_mb = 0,
                  kv_cache::PrefixCachePolicy prefix_cache_policy
                      = kv_cache::prefix_cache_policy_from_env(),
-                 bool use_fp16 = false,
+                 bool use_fp16 = true,      // FP16 by default (halves memory; FP32 for exact repro)
                  bool use_fp8 = false,      // FP8 weight-only (E4M3)
                  bool budget_from_free = false);
 

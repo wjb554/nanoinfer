@@ -113,7 +113,7 @@ static std::string prometheus_metrics(const ServerEngine& engine) {
 // ----------------------------------------------------------------------------
 int main(int argc, char** argv) {
     std::string model_dir = "models/qwen2.5-0.5b";
-    bool use_fp16 = false;
+    bool use_fp16 = true;   // FP16 default; pass --fp32 for exact-FP32 repro
     int port = 8080;
     int max_batch_tokens = 256;
     int max_seq_len = 2048;
@@ -121,6 +121,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--model") && i + 1 < argc)         model_dir = argv[++i];
         else if (!strcmp(argv[i], "--fp16"))                     use_fp16 = true;
+        else if (!strcmp(argv[i], "--fp32"))                     use_fp16 = false;
         else if (!strcmp(argv[i], "--port") && i + 1 < argc)     port = std::atoi(argv[++i]);
         else if (!strcmp(argv[i], "--max-batch-tokens") && i + 1 < argc)
             max_batch_tokens = std::atoi(argv[++i]);

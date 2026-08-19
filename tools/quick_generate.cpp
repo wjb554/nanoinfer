@@ -27,7 +27,7 @@ using namespace nanoinfer::engine;
 
 int main(int argc, char** argv) {
     const char* model_dir = "models/qwen2.5-0.5b";
-    bool use_fp16 = false;
+    bool use_fp16 = true;   // FP16 default; pass --fp32 for exact-FP32 repro
     bool use_fp8  = false;   // FP8 weight-only (E4M3)
     int  max_new = 32;
     float temperature = 1.0f;
@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         if      (!strcmp(argv[i], "--model") && i+1 < argc)   model_dir = argv[++i];
         else if (!strcmp(argv[i], "--fp16"))                  use_fp16 = true;
+        else if (!strcmp(argv[i], "--fp32"))                  use_fp16 = false;
         else if (!strcmp(argv[i], "--fp8"))                   use_fp8  = true;
         else if (!strcmp(argv[i], "--max-new") && i+1<argc)   max_new = std::atoi(argv[++i]);
         else if (!strcmp(argv[i], "--prompt") && i+1 < argc)  prompt = argv[++i];
