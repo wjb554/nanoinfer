@@ -71,6 +71,7 @@ set(NANOINFER_SOURCES
     src/kv_cache/radix_prefix_cache.cpp
     src/kv_cache/paged_attention.cu
     src/server/http_server.cpp
+    src/server/server_engine.cpp
     src/engine/scheduler.cpp
     src/engine/engine_server.cpp
     src/engine/draft_engine.cpp
@@ -104,6 +105,7 @@ set(NANOINFER_HEADERS
     include/nanoinfer/kv_cache/block_allocator.h
     include/nanoinfer/kv_cache/paged_attention.h
     include/nanoinfer/server/http_server.h
+    include/nanoinfer/server/server_engine.h
     include/nanoinfer/engine/scheduler.h
     include/nanoinfer/tokenizer/tokenizer.h
     include/nanoinfer/engine/engine.h
@@ -187,6 +189,10 @@ add_executable(bench_throughput tools/bench_throughput.cpp)
 target_link_libraries(bench_throughput PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
 target_include_directories(bench_throughput PRIVATE include)
 set_target_properties(bench_throughput PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+add_executable(serve tools/serve.cpp)
+target_link_libraries(serve PRIVATE nanoinfer CUDA::cudart CUDA::cublas)
+target_include_directories(serve PRIVATE include)
 
 add_executable(bench_fp16 tools/bench_fp16.cpp)
 target_link_libraries(bench_fp16 PRIVATE nanoinfer CUDA::cudart CUDA::cublas)

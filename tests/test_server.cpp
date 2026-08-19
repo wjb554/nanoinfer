@@ -50,9 +50,8 @@ int main(){
                         /*use_fp16=*/false);
     BatchMainLoop loop(engine, SchedulerPolicy::FCFS, /*chunk_size=*/16, /*max_batch_tokens=*/256);
 
-    run_server(8080, [&](const HttpRequest& req) -> HttpResponse {
-        HttpResponse resp;
-        if(req.path=="/health"){resp.body="{\"status\":\"ok\"}";return resp;}
+    run_server(8080, [&](const HttpRequest& req, HttpResponseWriter& w) {
+        if(req.path=="/health"){ w.send(200,"application/json","{\"status\":\"ok\"}"); return; }
 
         auto prompt=json_int_array(req.body,"prompt");
         int max_tok=json_int(req.body,"max_tokens");
@@ -75,12 +74,12 @@ int main(){
         all.insert(all.end(), gen.begin(), gen.end());
 
         auto output=json_array(all);
-        resp.body=json_obj(
+        auto body=json_obj(
             json_key("tokens",output)+","+
             json_key("new_tokens",std::to_string(new_tokens))+","+
             json_key("time_ms",std::to_string(ms))
         );
-        return resp;
+        w.send(200, "application/json", body);
     });
     return 0;
 }
