@@ -22,6 +22,7 @@
 ///   - Finish:               release ALL blocks across ALL layers
 
 #include "nanoinfer/engine/engine.h"
+#include "nanoinfer/backend/registry.h"
 #include "nanoinfer/engine/scheduler.h"
 #include "nanoinfer/kv_cache/block_allocator.h"
 #include "nanoinfer/kv_cache/paged_attention.h"
@@ -374,41 +375,58 @@ static void load_fp8(SafetensorsLoader& l, const std::string& n,
 
 static Tensor cast_f32_to_f16(const Tensor& x);  // defined below (dtype helpers)
 
+// ============================================================================
+// Backend plugin selection helpers
+// ============================================================================
+
+/// Env read of NANOINFER_FP8_W8A16 — identical to the original
+/// EngineServer::layer_gemm body (static cached).  Passed to backends so the
+/// effective-W8A16 flag matches exactly what the reference body computes.
+static bool fp8_w8a16_from_env() {
+    static const bool fp8_w8a16 = [] {
+        const char* e = std::getenv("NANOINFER_FP8_W8A16");
+        return e && e[0] && e[0] != '0';
+    }();
+    return fp8_w8a16;
+}
+
+/// Create a backend from the registry; on an unknown name the original
+/// std::runtime_error from BackendRegistry::create is re-thrown as a
+/// runtime_error augmented with the list of registered names.
+template <class T>
+std::unique_ptr<T> create_backend(const char* what, const std::string& name) {
+    try {
+        return backend::BackendRegistry<T>::instance().create(name);
+    } catch (const std::exception& e) {
+        std::vector<std::string> avail =
+            backend::BackendRegistry<T>::instance().names();
+        std::string list;
+        for (size_t i = 0; i < avail.size(); i++) {
+            if (i) list += ", ";
+            list += avail[i];
+        }
+        throw std::runtime_error(
+            "EngineServer: unknown " + std::string(what) + " backend '" + name
+            + "' (registered: " + (list.empty() ? "<none>" : list) + ")");
+    }
+}
+
 // Layer GEMM dispatching on precision: fp8 weight-only (fused dequant),
 // fp16 (cuBLAS tensor core), or fp32.  fp32_out controls the output dtype:
 // q/k/v want F32 (attention); o/gate/up/down need weight_dtype_ (F16) so the
 // residual add matches (fp8 path casts the F32 GEMM result down).
+//
+// The dispatch body now lives in the selected GEMM backend
+// (backend::IGemmBackend).  The default backend (GemmBackendReference) is the
+// original body moved verbatim, so the numbers are unchanged.
 Tensor EngineServer::layer_gemm(const Tensor& h, const Tensor& w_f16,
                                 const Tensor& w_f8, const Tensor& w_s,
                                 bool fp32_out) const {
-    if (use_fp8_) {
-        // Route B (W8A8 fp8 tensor cores) by default; set NANOINFER_FP8_W8A16=1
-        // to fall back to Route A (dequant fp8→fp16, cuBLAS fp16 tensor cores).
-        static const bool fp8_w8a16 = [] {
-            const char* e = std::getenv("NANOINFER_FP8_W8A16");
-            return e && e[0] && e[0] != '0';
-        }();
-        // Effective W8A16: forced, or W8A8 unsupported (cuBLAS fp8 is Hopper-only;
-        // Ada RTX 4090 falls back to W8A16).
-        const bool use_w8a16 = fp8_w8a16 || !ops::fp8_w8a8_available();
-        // Decode (M==1): the dedicated split-K GEMV is 2.4-13x faster than the
-        // dequant+cuBLAS GEMM and numerically the same W8A16 dequant.
-        if (h.size(0) == 1 && use_w8a16) {
-            Tensor o = ops::gemv_f16_fp8(h, w_f8, w_s);
-            if (fp32_out) return o;
-            return cast_f32_to_f16(o);   // residual path wants weight_dtype_ (F16)
-        }
-        Tensor o = use_w8a16
-            ? ops::gemm_f16_fp8_cublas(h, w_f8, w_s, /*transpose_b=*/true)
-            : ops::gemm_f16_fp8_w8a8(h, w_f8, w_s, /*transpose_b=*/true);
-        if (fp32_out) return o;
-        return cast_f32_to_f16(o);   // residual path wants weight_dtype_ (F16)
-    }
-    if (weight_dtype_ == DType::F16) {
-        if (fp32_out) return ops::gemm_f16f32(h, w_f16, /*transpose_b=*/true);  // F32
-        return ops::gemm(h, w_f16, /*transpose_b=*/true);                       // F16
-    }
-    return ops::gemm(h, w_f16, /*transpose_b=*/true);
+    backend::GemmLayerConfig cfg;
+    cfg.use_fp8      = use_fp8_;
+    cfg.weight_dtype = weight_dtype_;
+    cfg.fp8_w8a16    = fp8_w8a16_from_env();
+    return gemm_backend_->layer_gemm(h, w_f16, w_f8, w_s, cfg, fp32_out);
 }
 
 // ============================================================================
@@ -474,6 +492,25 @@ EngineServer::EngineServer(const std::string& model_dir,
     , weight_dtype_((use_fp8 || use_fp16) ? DType::F16 : DType::F32)
     , prefix_cache_policy_(prefix_cache_policy)
 {
+    // ---- Backend plugin selection (env-driven; defaults reproduce the
+    //      original numerics exactly) ----
+    // NANOINFER_GEMM_BACKEND / NANOINFER_ATTN_BACKEND select the plugin.
+    // Defaults "reference" / "paged" are the original implementations moved
+    // verbatim.  force_link_backend_registrars() guarantees the registrar
+    // objects in the static library are linked in.  Unknown name -> throw.
+    {
+        backend::force_link_backend_registrars();
+        const char* g = std::getenv("NANOINFER_GEMM_BACKEND");
+        const char* a = std::getenv("NANOINFER_ATTN_BACKEND");
+        const std::string gemm_name = (g && g[0]) ? g : "reference";
+        const std::string attn_name = (a && a[0]) ? a : "paged";
+        gemm_backend_ = create_backend<backend::IGemmBackend>("GEMM", gemm_name);
+        attn_backend_ = create_backend<backend::IAttentionBackend>(
+            "attention", attn_name);
+        printf("EngineServer: backends gemm=%s attention=%s\n",
+               gemm_name.c_str(), attn_name.c_str());
+    }
+
     char buf[512];
     snprintf(buf, sizeof(buf), "%s/config.json", model_dir.c_str());
     cfg_ = parse_config(buf);
@@ -1125,7 +1162,7 @@ Tensor EngineServer::run_layers(
         // Block table + seq lens are hoisted above (identical every layer).
         {
             auto _ta = std::chrono::steady_clock::now();
-            Tensor attn_out_3d = kv_cache::paged_attention(
+            Tensor attn_out_3d = attn_backend_->decode_paged_attention(
                 q, d_bt.data<int>(), max_blocks, d_sl.data<int>(), alloc,
                 start_pos + T);   // max seq len (seq_lens[i] = start_pos+i+1)
             _t_attn += std::chrono::duration<double, std::milli>(
@@ -1998,7 +2035,7 @@ std::vector<SampledToken> EngineServer::step(
             Tensor d_seq_len({1}, DType::I32, Device::CUDA);
             d_seq_len.copy_from(&total_seq, sizeof(int));
 
-            Tensor a_out = kv_cache::prefill_paged_attention(
+            Tensor a_out = attn_backend_->prefill_paged_attention(
                 q_i,
                 d_bt.data<int>(),
                 max_blocks_per_seq_,
@@ -2079,7 +2116,7 @@ std::vector<SampledToken> EngineServer::step(
             // ONE kernel call for all decode entries
             int max_decode_len = 0;
             for (int j = 0; j < N; j++) max_decode_len = std::max(max_decode_len, lens[j]);
-            Tensor a_out = kv_cache::paged_attention(
+            Tensor a_out = attn_backend_->decode_paged_attention(
                 q_all,
                 d_all_block_tables_.data<int>(),
                 max_blocks_per_seq_,

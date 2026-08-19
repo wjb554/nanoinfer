@@ -31,6 +31,8 @@
 #include "nanoinfer/model/model_config.h"
 #include "nanoinfer/kv_cache/block_allocator.h"
 #include "nanoinfer/engine/draft_engine.h"
+#include "nanoinfer/backend/gemm_backend.h"
+#include "nanoinfer/backend/attention_backend.h"
 
 // Forward declare xgrammar types at GLOBAL scope (the real xgrammar lives in
 // ::xgrammar, NOT inside nanoinfer::engine).
@@ -471,6 +473,15 @@ private:
     /// Active draft strategy (self-spec layer-slice or dual-model engine).
     /// Created by enable_speculative_decode(); owns its own KV cache.
     std::unique_ptr<DraftEngine> draft_engine_;
+
+    // ---- Backend plugins ----
+    // Selected from NANOINFER_GEMM_BACKEND / NANOINFER_ATTN_BACKEND (defaults
+    // "reference" / "paged") in the constructor.  The default implementations
+    // are the original layer_gemm body and the original paged-attention call
+    // sites moved verbatim, so default execution is numerically identical to
+    // the pre-plugin engine.
+    std::unique_ptr<backend::IGemmBackend> gemm_backend_;
+    std::unique_ptr<backend::IAttentionBackend> attn_backend_;
 
     // ---- Internal helpers ----
     /// Layer GEMM dispatching on weight precision: fp8 weight-only (fused

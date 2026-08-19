@@ -75,6 +75,8 @@ set(NANOINFER_SOURCES
     src/engine/engine_server.cpp
     src/engine/draft_engine.cpp
     src/engine/batch_loop.cpp
+    src/backend/gemm_backend.cpp
+    src/backend/attention_backend.cpp
     src/tokenizer/tokenizer.cpp
     src/model/model_config.cpp
 )
@@ -107,11 +109,16 @@ set(NANOINFER_HEADERS
     include/nanoinfer/engine/engine.h
     include/nanoinfer/engine/draft_engine.h
     include/nanoinfer/engine/batch_loop.h
+    include/nanoinfer/backend/registry.h
+    include/nanoinfer/backend/gemm_backend.h
+    include/nanoinfer/backend/attention_backend.h
 )
 
 # engine_server.cpp + draft_engine.cpp contain inline CUDA kernels — compile with nvcc
 set_source_files_properties(src/engine/engine_server.cpp PROPERTIES LANGUAGE CUDA)
 set_source_files_properties(src/engine/draft_engine.cpp PROPERTIES LANGUAGE CUDA)
+# gemm_backend.cpp carries the F32->F16 cast kernel — compile with nvcc
+set_source_files_properties(src/backend/gemm_backend.cpp PROPERTIES LANGUAGE CUDA)
 
 add_library(nanoinfer STATIC ${NANOINFER_SOURCES} ${NANOINFER_HEADERS})
 target_include_directories(nanoinfer PUBLIC include)
