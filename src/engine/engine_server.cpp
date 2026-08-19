@@ -514,6 +514,14 @@ EngineServer::EngineServer(const std::string& model_dir,
     char buf[512];
     snprintf(buf, sizeof(buf), "%s/config.json", model_dir.c_str());
     cfg_ = parse_config(buf);
+
+    // ---- Architecture abstraction (P-A) ----
+    // Select the weight-name mapping + ArchSpec for cfg_.architecture.  An
+    // empty architecture string falls back to the reference Qwen2 path; any
+    // other unknown name throws with the list of registered architectures.
+    arch_ = model::create_model_architecture(cfg_.architecture,
+                                             model::make_arch_spec(cfg_));
+
     SafetensorsLoader loader = SafetensorsLoader::from_dir(model_dir);
 
     D_   = cfg_.hidden_size;
@@ -547,39 +555,42 @@ EngineServer::EngineServer(const std::string& model_dir,
     printf("  prefix_cache=%s\n", kv_cache::prefix_cache_policy_name(prefix_cache_policy_));
     printf("Loading weights...\n");
 
-    embed_w_    = load_weight(loader, "model.embed_tokens.weight", use_fp16_);
-    final_norm_ = load_weight(loader, "model.norm.weight", use_fp16_);
+    embed_w_    = load_weight(loader, arch_->embed_name(), use_fp16_);
+    final_norm_ = load_weight(loader, arch_->final_norm_name(), use_fp16_);
     // Untied models (e.g. Qwen2.5-7B, tie_word_embeddings=false) have a
     // SEPARATE lm_head.weight that must be used for the final logits
     // projection.  Tied models share embed_tokens as the LM head.
     if (!cfg_.tie_word_embeddings) {
-        lm_head_w_ = load_weight(loader, "lm_head.weight", use_fp16_);
+        lm_head_w_ = load_weight(loader, arch_->lm_head_name(), use_fp16_);
         printf("  lm_head loaded (untied weights, tie_word_embeddings=false)\n");
     } else {
         printf("  lm_head tied to embed_tokens (tie_word_embeddings=true)\n");
     }
     for (int i = 0; i < n_layers_; i++) {
-        auto ns = std::to_string(i);
         auto L = std::make_unique<EngineLayerW>();
         // Linear weights: fp8 (quantized) when use_fp8_, else fp16/fp32.
         auto load_w = [&](const std::string& name, Tensor& f16, Tensor& f8, Tensor& s) {
             if (use_fp8_) load_fp8(loader, name, f8, s);
             else          f16 = load_weight(loader, name, use_fp16_);
         };
-        load_w("model.layers."+ns+".self_attn.q_proj.weight", L->q, L->q_f8, L->q_s);
-        load_w("model.layers."+ns+".self_attn.k_proj.weight", L->k, L->k_f8, L->k_s);
-        load_w("model.layers."+ns+".self_attn.v_proj.weight", L->v, L->v_f8, L->v_s);
-        load_w("model.layers."+ns+".self_attn.o_proj.weight", L->o, L->o_f8, L->o_s);
-        load_w("model.layers."+ns+".mlp.gate_proj.weight", L->gate, L->gate_f8, L->gate_s);
-        load_w("model.layers."+ns+".mlp.up_proj.weight",   L->up,   L->up_f8,   L->up_s);
-        load_w("model.layers."+ns+".mlp.down_proj.weight", L->down, L->down_f8, L->down_s);
+        // Weight names come from the architecture abstraction (P-A).  For
+        // Qwen2 they are byte-identical to the previous hardcoded strings.
+        load_w(arch_->layer_weight_name(i, "q", "weight"), L->q, L->q_f8, L->q_s);
+        load_w(arch_->layer_weight_name(i, "k", "weight"), L->k, L->k_f8, L->k_s);
+        load_w(arch_->layer_weight_name(i, "v", "weight"), L->v, L->v_f8, L->v_s);
+        load_w(arch_->layer_weight_name(i, "o", "weight"), L->o, L->o_f8, L->o_s);
+        load_w(arch_->layer_weight_name(i, "gate", "weight"), L->gate, L->gate_f8, L->gate_s);
+        load_w(arch_->layer_weight_name(i, "up", "weight"),   L->up,   L->up_f8,   L->up_s);
+        load_w(arch_->layer_weight_name(i, "down", "weight"), L->down, L->down_f8, L->down_s);
         // RMSNorm weights stay fp16/fp32 (small, used by the norm op).
-        L->a_n = load_weight(loader, "model.layers."+ns+".input_layernorm.weight", use_fp16_);
-        L->m_n = load_weight(loader, "model.layers."+ns+".post_attention_layernorm.weight", use_fp16_);
-        // Attention projection biases — Qwen2 keeps them; stored F32.
-        L->qb = load_f32(loader, "model.layers."+ns+".self_attn.q_proj.bias");
-        L->kb = load_f32(loader, "model.layers."+ns+".self_attn.k_proj.bias");
-        L->vb = load_f32(loader, "model.layers."+ns+".self_attn.v_proj.bias");
+        L->a_n = load_weight(loader, arch_->layer_norm_name(i, "input"), use_fp16_);
+        L->m_n = load_weight(loader, arch_->layer_norm_name(i, "post"), use_fp16_);
+        // Attention projection biases — Qwen2 keeps them (has_qkv_bias()); F32.
+        if (arch_->has_qkv_bias()) {
+            L->qb = load_f32(loader, arch_->layer_weight_name(i, "q", "bias"));
+            L->kb = load_f32(loader, arch_->layer_weight_name(i, "k", "bias"));
+            L->vb = load_f32(loader, arch_->layer_weight_name(i, "v", "bias"));
+        }
         layers_.push_back(std::move(L));
         if (i == 0 || i == n_layers_ - 1)
             printf("  layer %d loaded\n", i);
@@ -1038,8 +1049,40 @@ Tensor EngineServer::run_layers(
     std::vector<kv_cache::BlockAllocator*>& allocs_abs,          // per absolute layer
     bool write_kv)
 {
+    // P-A: the transformer block loop lives in forward_layers_impl, which is
+    // the ORIGINAL run_layers body verbatim, parameterized only by the
+    // architecture spec.  run_layers delegates with arch_->spec() so the
+    // default Qwen2.5 path computes exactly the same numbers as before.
+    return forward_layers_impl(hidden, start_layer, num_layers, start_pos,
+                               block_tables_abs, allocs_abs, write_kv,
+                               arch_->spec());
+}
+
+// ============================================================================
+// forward_layers_impl — the full transformer block loop (P-A).
+// ============================================================================
+// MOVED VERBATIM from the original run_layers body.  The ONLY substitutions are
+// the config reads routed through `spec` where they equal the current
+// hardcoded Qwen2 values:
+//   rms_norm_eps  <- spec.rms_norm_eps
+//   rope_theta    <- spec.rope_theta
+//   Hq_ / Hkv_ / hd_  <- spec.num_heads / spec.num_kv_heads / spec.head_dim
+// D_, weight_dtype_, max_blocks_per_seq_, n_layers_, layers_, attn_backend_,
+// the NANOINFER_TRACE_RL instrumentation, the op order, and the identity fix
+// (seq_lens[i]=start_pos+i+1) are untouched.
+
+Tensor EngineServer::forward_layers_impl(
+    const Tensor& hidden,      // [T, D_] — input (weight_dtype_)
+    int start_layer,           // first absolute layer index (0-based)
+    int num_layers,            // number of layers to run
+    int start_pos,             // absolute RoPE position of the first token
+    const std::vector<kv_cache::BlockTable>& block_tables_abs,  // per absolute layer
+    std::vector<kv_cache::BlockAllocator*>& allocs_abs,          // per absolute layer
+    bool write_kv,
+    const model::ArchSpec& spec)
+{
     int T = hidden.size(0);
-    int half_hd = hd_ / 2;
+    int half_hd = spec.head_dim / 2;
     int max_blocks = max_blocks_per_seq_;
 
     // TEMP diagnostic: NANOINFER_TRACE_RL=1 prints per-call breakdown.
@@ -1079,7 +1122,7 @@ Tensor EngineServer::run_layers(
             int pos = start_pos + t;
             for (int d = 0; d < half_hd; d++) {
                 float theta = static_cast<float>(pos)
-                    / powf(cfg_.rope_theta, 2.0f * d / hd_);
+                    / powf(spec.rope_theta, 2.0f * d / spec.head_dim);
                 size_t idx = static_cast<size_t>(t) * half_hd + d;
                 vc[idx] = cosf(theta);
                 vs[idx] = sinf(theta);
@@ -1105,8 +1148,8 @@ Tensor EngineServer::run_layers(
     d_sl.copy_from(seq_lens.data(), T * sizeof(int));
 
     // Reused per-row K/V scratch (avoids a device allocation per row).
-    Tensor k_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
-    Tensor v_new({1, Hkv_, hd_}, DType::F32, Device::CUDA);
+    Tensor k_new({1, spec.num_kv_heads, spec.head_dim}, DType::F32, Device::CUDA);
+    Tensor v_new({1, spec.num_kv_heads, spec.head_dim}, DType::F32, Device::CUDA);
 
     if (_tr) cudaEventRecord(_gpu_e0);
 
@@ -1116,7 +1159,7 @@ Tensor EngineServer::run_layers(
         auto& alloc = *allocs_abs[l];
 
         // --- RMSNorm ---
-        Tensor normed = rms_norm(h, L.a_n, cfg_.rms_norm_eps);
+        Tensor normed = rms_norm(h, L.a_n, spec.rms_norm_eps);
 
         // --- Q / K / V projection (batched) ---
         Tensor q, k, v;
@@ -1133,9 +1176,9 @@ Tensor EngineServer::run_layers(
         ops::add_bias_inplace(q, L.qb);
         ops::add_bias_inplace(k, L.kb);
         ops::add_bias_inplace(v, L.vb);
-        q.reshape_inplace({T, Hq_, hd_});
-        k.reshape_inplace({T, Hkv_, hd_});
-        v.reshape_inplace({T, Hkv_, hd_});
+        q.reshape_inplace({T, spec.num_heads, spec.head_dim});
+        k.reshape_inplace({T, spec.num_kv_heads, spec.head_dim});
+        v.reshape_inplace({T, spec.num_kv_heads, spec.head_dim});
 
         // --- RoPE (reuse hoisted cos/sin) ---
         rope(q, &k, cos, sin);
@@ -1143,7 +1186,8 @@ Tensor EngineServer::run_layers(
         // --- Write K/V BEFORE attention so later rows see earlier rows' KV ---
         if (write_kv) {
             auto _tw = std::chrono::steady_clock::now();
-            size_t k_row_bytes = static_cast<size_t>(Hkv_) * hd_ * sizeof(float);
+            size_t k_row_bytes = static_cast<size_t>(spec.num_kv_heads)
+                                 * spec.head_dim * sizeof(float);
             for (int i = 0; i < T; i++) {
                 cudaMemcpy(k_new.raw(),
                            static_cast<const char*>(k.raw()) + i * k_row_bytes,
@@ -1181,7 +1225,7 @@ Tensor EngineServer::run_layers(
         }
 
         // --- MLP ---
-        normed = rms_norm(h, L.m_n, cfg_.rms_norm_eps);
+        normed = rms_norm(h, L.m_n, spec.rms_norm_eps);
         Tensor gate = layer_gemm(normed, L.gate, L.gate_f8, L.gate_s, false);
         Tensor up   = layer_gemm(normed, L.up, L.up_f8, L.up_s, false);
         silu_inplace(gate);

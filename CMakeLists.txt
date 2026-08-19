@@ -80,6 +80,7 @@ set(NANOINFER_SOURCES
     src/backend/attention_backend.cpp
     src/tokenizer/tokenizer.cpp
     src/model/model_config.cpp
+    src/model/model_arch.cpp
 )
 
 set(NANOINFER_HEADERS
@@ -97,6 +98,8 @@ set(NANOINFER_HEADERS
     include/nanoinfer/ops/reduce.h
     include/nanoinfer/model/model_loader.h
     include/nanoinfer/model/model_config.h
+    include/nanoinfer/model/arch_spec.h
+    include/nanoinfer/model/model_arch.h
     include/nanoinfer/model/transformer_block.h
     include/nanoinfer/ops/embedding.h
     include/nanoinfer/ops/sampling.h

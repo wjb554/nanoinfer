@@ -29,6 +29,7 @@
 
 #include "nanoinfer/tensor.h"
 #include "nanoinfer/model/model_config.h"
+#include "nanoinfer/model/model_arch.h"
 #include "nanoinfer/kv_cache/block_allocator.h"
 #include "nanoinfer/engine/draft_engine.h"
 #include "nanoinfer/backend/gemm_backend.h"
@@ -410,6 +411,10 @@ public:
     /// Access RoPE theta from model config (for testing).
     float rope_theta() const { return cfg_.rope_theta; }
 
+    /// Access the architecture abstraction (P-A): weight-name mapping +
+    /// ArchSpec.  Selected in the constructor from cfg_.architecture.
+    const model::IModelArchitecture& arch() const { return *arch_; }
+
     /// LM-head weight: a separate `lm_head.weight` when the model is NOT
     /// weight-tied (Qwen2.5-7B has tie_word_embeddings=false), otherwise the
     /// shared embedding matrix.  Using embed_w_ as the LM head on an untied
@@ -420,6 +425,9 @@ public:
 
 private:
     model::ModelConfig cfg_;
+    /// Architecture abstraction (P-A): weight-name mapping + ArchSpec.
+    /// Created in the constructor from cfg_.architecture + make_arch_spec(cfg_).
+    std::unique_ptr<model::IModelArchitecture> arch_;
     int D_, Hq_, Hkv_, hd_, n_layers_, vocab_;
 
     Tensor embed_w_, final_norm_;
@@ -492,6 +500,22 @@ private:
     Tensor layer_gemm(const Tensor& h, const Tensor& w_f16,
                       const Tensor& w_f8, const Tensor& w_s,
                       bool fp32_out) const;
+
+    /// The transformer block loop (P-A).  This is the ORIGINAL run_layers body
+    /// moved verbatim; the only substitutions are config reads routed through
+    /// `spec` where they equal the current hardcoded Qwen2 values:
+    ///   rms_norm_eps  <- spec.rms_norm_eps
+    ///   rope_theta    <- spec.rope_theta
+    ///   Hq_ / Hkv_ / hd_  <- spec.num_heads / spec.num_kv_heads / spec.head_dim
+    /// Everything else (op order, kernels, NANOINFER_TRACE_RL instrumentation,
+    /// the identity fix seq_lens[i]=start_pos+i+1) is untouched, so the default
+    /// Qwen2.5 path computes byte-identical numbers to before the refactor.
+    /// run_layers() delegates here with arch_->spec().
+    Tensor forward_layers_impl(
+        const Tensor& hidden, int start_layer, int num_layers, int start_pos,
+        const std::vector<kv_cache::BlockTable>& block_tables_abs,
+        std::vector<kv_cache::BlockAllocator*>& allocs_abs, bool write_kv,
+        const model::ArchSpec& spec);
 
     void scatter_prefill_kv(int layer,
                             const Tensor& k_contig,
