@@ -1,0 +1,4 @@
+# Force LF line endings for shell scripts (they run on Linux servers after
+# sync.sh; CRLF from Windows autocrlf breaks bash with stray \r chars).
+*.sh text eol=lf
+*.bat text eol=crlf
