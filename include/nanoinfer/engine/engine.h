@@ -477,6 +477,12 @@ private:
     Tensor d_prefill_bt_flat_;        // [N * max_blocks_per_seq_] int32
     Tensor d_prefill_seq_len_;        // [N] int32 (historical + chunk)
     Tensor d_prefill_seq_start_;      // [N] int32 (q-row offset in q_flat)
+    // Decode-side unified-attention metadata ([max_batch_tokens_] each).
+    // Separate from the prefill buffers: a pure-decode step has no prefill
+    // entry, so prefill_batch_capacity_ (and thus d_prefill_*) may be 0/small.
+    Tensor d_decode_seq_start_;       // [N] int32 (q-row offset in q_flat)
+    Tensor d_decode_seq_count_;       // [N] int32 (always 1)
+    Tensor d_decode_seq_abs_;         // [N] int32 (RoPE position = seq_len)
 
     // ---- Speculative Decoding ----
     SpeculativeDecodeConfig spec_cfg_;

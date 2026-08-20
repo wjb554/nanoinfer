@@ -135,18 +135,21 @@ void scatter_prefill_kv_batched_gpu_dispatch(
 ///
 /// @param q_ptr         [P_total, Hq, D] flat queries for all entries
 /// @param seq_start     [N] first q-row of each sequence in q_ptr
-/// @param seq_count     [N] q-rows per sequence
-/// @param seq_len       [N] KV length per sequence (historical + current chunk)
-/// @param seq_abs_start [N] absolute position of each seq's first chunk token
+/// @param seq_count     [N] q-rows per sequence (prefill: chunk size; decode: 1)
+/// @param seq_len       [N] KV length per sequence (prefill: historical+chunk;
+///                          decode: seq_len+1 incl. self-attention)
+/// @param seq_abs_start [N] absolute position of each seq's first q-row
 /// @param flat_bt       [N * max_blocks] flattened per-sequence block tables
 /// @param P_total       total q-rows across all sequences
+/// @param max_seq_hint  upper bound on largest seq_len; >256 enables Split-K
 void paged_prefill_attention_batched_gpu(
     void* out_ptr, const void* q_ptr,
     DType dtype,
     int Hq, int Hkv, int D,
     const int* seq_start, const int* seq_count, const int* seq_len,
     const int* seq_abs_start, const int* flat_bt, int max_blocks,
-    int N, int P_total, float scale, class BlockAllocator& allocator);
+    int N, int P_total, float scale, class BlockAllocator& allocator,
+    int max_seq_hint = -1);
 
 }  // namespace kv_cache
 }  // namespace nanoinfer

@@ -701,6 +701,12 @@ EngineServer::EngineServer(const std::string& model_dir,
     d_all_block_tables_ = Tensor(
         {max_batch_tokens_ * max_blocks_per_seq_}, DType::I32, Device::CUDA);
     d_all_seq_lens_ = Tensor({max_batch_tokens_}, DType::I32, Device::CUDA);
+    // Decode-side unified-attention metadata (decode may run without any
+    // prefill entry in a step, so these must NOT share the prefill buffers,
+    // which are sized by prefill_batch_capacity_ and can be 0).
+    d_decode_seq_start_ = Tensor({max_batch_tokens_}, DType::I32, Device::CUDA);
+    d_decode_seq_count_ = Tensor({max_batch_tokens_}, DType::I32, Device::CUDA);
+    d_decode_seq_abs_   = Tensor({max_batch_tokens_}, DType::I32, Device::CUDA);
 
     // ---- Initialize xgrammar (structured output) ----
     {
@@ -1147,6 +1153,24 @@ Tensor EngineServer::forward_layers_impl(
     Tensor d_sl({T}, DType::I32, Device::CUDA);
     d_sl.copy_from(seq_lens.data(), T * sizeof(int));
 
+    // Unified attention metadata: each of the T rows is one single-row
+    // sequence (speculative draft/verify convention), sharing the block table
+    // (h_bt already replicated T times above).  seq_len per row = start_pos+i+1.
+    std::vector<int> rl_seq_start(T), rl_seq_count(T), rl_seq_abs(T);
+    int rl_max_len = 0;
+    for (int i = 0; i < T; i++) {
+        rl_seq_start[i] = i;
+        rl_seq_count[i] = 1;
+        rl_seq_abs[i]   = start_pos + i;
+        rl_max_len = std::max(rl_max_len, seq_lens[i]);
+    }
+    Tensor d_rl_start({T}, DType::I32, Device::CUDA);
+    Tensor d_rl_count({T}, DType::I32, Device::CUDA);
+    Tensor d_rl_abs({T}, DType::I32, Device::CUDA);
+    d_rl_start.copy_from(rl_seq_start.data(), T * sizeof(int));
+    d_rl_count.copy_from(rl_seq_count.data(), T * sizeof(int));
+    d_rl_abs.copy_from(rl_seq_abs.data(), T * sizeof(int));
+
     // Reused per-row K/V scratch (avoids a device allocation per row).
     Tensor k_new({1, spec.num_kv_heads, spec.head_dim}, DType::F32, Device::CUDA);
     Tensor v_new({1, spec.num_kv_heads, spec.head_dim}, DType::F32, Device::CUDA);
@@ -1205,13 +1229,21 @@ Tensor EngineServer::forward_layers_impl(
                 std::chrono::steady_clock::now() - _tw).count();
         }
 
-        // --- Batched paged attention (T rows of one sequence) ---
+        // --- Unified batched attention (T single-row sequences) ---
         // Block table + seq lens are hoisted above (identical every layer).
         {
             auto _ta = std::chrono::steady_clock::now();
-            Tensor attn_out_3d = attn_backend_->decode_paged_attention(
-                q, d_bt.data<int>(), max_blocks, d_sl.data<int>(), alloc,
-                start_pos + T);   // max seq len (seq_lens[i] = start_pos+i+1)
+            float rl_scale = 1.0f / sqrtf(static_cast<float>(spec.head_dim));
+            kv_cache::paged_prefill_attention_batched_gpu(
+                q.raw(), q.raw(), q.dtype(),
+                spec.num_heads, spec.num_kv_heads, spec.head_dim,
+                d_rl_start.data<int>(), d_rl_count.data<int>(),
+                d_sl.data<int>(), d_rl_abs.data<int>(),
+                d_bt.data<int>(), max_blocks,
+                T, T, rl_scale, alloc, rl_max_len);
+            // Unified kernel wrote attention output in place into q
+            // (out==q).  The 3D view below reads it.
+            Tensor& attn_out_3d = q;
             _t_attn += std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - _ta).count();
 
@@ -2045,27 +2077,17 @@ std::vector<SampledToken> EngineServer::step(
                 *kv_allocators_[l]);
         }
 
-        // ----- 3d-ii. Decode entries (batched paged_attention) -----
+        // ----- 3d-ii. Decode entries (unified batched attention) -----
         if (!decode_indices.empty()) {
             int N = static_cast<int>(decode_indices.size());
 
-            // Build Q_all: [N, Hq, hd]
-            Tensor q_all({N, Hq_, hd_}, DType::F32, Device::CUDA);
             std::vector<RequestState*> decode_states;
             decode_states.reserve(N);
-
             for (int j = 0; j < N; j++) {
                 int idx = decode_indices[j];
-                auto [start, end] = entry_map[idx];
                 auto it = states.find(step.entries[idx].request_idx);
                 if (it == states.end()) continue;
                 decode_states.push_back(it->second.get());
-
-                // Copy Q[j] from q_flat
-                cudaMemcpy(q_all.data<float>() + j * Hq_ * hd_,
-                           q_ptr + start * Hq_ * hd_,
-                           Hq_ * hd_ * sizeof(float),
-                           cudaMemcpyDeviceToDevice);
             }
 
             // Build flat block table: [N * max_blocks_per_seq_]
@@ -2103,32 +2125,46 @@ std::vector<SampledToken> EngineServer::step(
                 lens[j] = state.seq_len + 1;
             }
 
-            // Copy metadata to GPU pre-allocated tensors
+            // Metadata for the unified batched attention kernel.
+            // q lives in the flat [total_tokens, Hq, hd] tensor; each decode
+            // entry is one q-row at its `start` offset, attends to [0, seq_len].
+            std::vector<int> d_seq_start(N), d_seq_count(N), d_seq_abs(N);
+            int max_decode_len = 0;
+            for (int j = 0; j < N; j++) {
+                int idx = decode_indices[j];
+                auto [start, end] = entry_map[idx];
+                d_seq_start[j] = start;            // row offset in q_flat/attn_flat
+                d_seq_count[j] = 1;
+                d_seq_abs[j]   = decode_states[j]->seq_len;  // RoPE position
+                max_decode_len = std::max(max_decode_len, lens[j]);
+            }
+            // Copy metadata to GPU pre-allocated decode buffers
             d_all_block_tables_.copy_from(bt_flat.data(),
                                           bt_flat.size() * sizeof(int));
             d_all_seq_lens_.copy_from(lens.data(),
                                       N * sizeof(int));
+            d_decode_seq_start_.copy_from(d_seq_start.data(),
+                                          N * sizeof(int));
+            d_decode_seq_count_.copy_from(d_seq_count.data(),
+                                          N * sizeof(int));
+            d_decode_seq_abs_.copy_from(d_seq_abs.data(),
+                                        N * sizeof(int));
 
-            // ONE kernel call for all decode entries
-            int max_decode_len = 0;
-            for (int j = 0; j < N; j++) max_decode_len = std::max(max_decode_len, lens[j]);
-            Tensor a_out = attn_backend_->decode_paged_attention(
-                q_all,
+            // ONE unified kernel call for all decode entries (same kernel as
+            // prefill: batched paged attention, always causal, reads paged K/V).
+            float scale = 1.0f / sqrtf(static_cast<float>(hd_));
+            kv_cache::paged_prefill_attention_batched_gpu(
+                attn_ptr, q_ptr, DType::F32,
+                Hq_, Hkv_, hd_,
+                d_decode_seq_start_.data<int>(),
+                d_decode_seq_count_.data<int>(),
+                d_all_seq_lens_.data<int>(),
+                d_decode_seq_abs_.data<int>(),
                 d_all_block_tables_.data<int>(),
                 max_blocks_per_seq_,
-                d_all_seq_lens_.data<int>(),
+                N, N, scale,
                 *kv_allocators_[l],
-                max_decode_len);   // max seq len hint, skips the per-layer D2H
-
-            // Copy attention output row j back to the flat tensor
-            for (int j = 0; j < N; j++) {
-                int idx = decode_indices[j];
-                auto [start, end] = entry_map[idx];
-                cudaMemcpy(attn_ptr + start * Hq_ * hd_,
-                           a_out.data<float>() + j * Hq_ * hd_,
-                           Hq_ * hd_ * sizeof(float),
-                           cudaMemcpyDeviceToDevice);
-            }
+                max_decode_len);   // enables Split-K for long sequences
         }
 
         // --- 3e. O-projection + residual (batched) ---

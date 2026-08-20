@@ -1239,16 +1239,18 @@ void scatter_prefill_kv_batched_gpu_dispatch(
 
 template<typename scalar_t>
 __global__ void paged_prefill_attention_batched_kernel(
-    scalar_t* __restrict__ out, const scalar_t* __restrict__ q,
+    scalar_t* __restrict__ out, float* __restrict__ partial,
+    const scalar_t* __restrict__ q,
     const scalar_t* __restrict__ k_pool, const scalar_t* __restrict__ v_pool,
     int Hq, int Hkv, int D,
     const int* __restrict__ seq_start, const int* __restrict__ seq_count,
     const int* __restrict__ seq_len, const int* __restrict__ seq_abs_start,
     const int* __restrict__ flat_bt, int max_blocks,
-    int N, int P_total, float scale, int B_r)
+    int N, int P_total, float scale, int B_r, int num_splits)
 {
     int q_head       = blockIdx.y;
     int kv_head      = q_head / (Hq / Hkv);
+    int split        = blockIdx.z;
     int tid          = threadIdx.x;
     int bdim         = blockDim.x;
 
@@ -1271,6 +1273,15 @@ __global__ void paged_prefill_attention_batched_kernel(
     int kv_len       = seq_len[seq];
     int abs_start    = seq_abs_start[seq];
     int n_blocks     = (kv_len + BLOCK - 1) / BLOCK;
+
+    // ---- Split-K: this block only processes a subrange of the sequence's
+    // KV blocks.  Split boundaries are per-sequence (each seq has its own
+    // kv_len).  num_splits==1 => blk_start=0, blk_end=n_blocks (full range).
+    int blocks_per_split = (n_blocks + num_splits - 1) / num_splits;
+    int blk_start = split * blocks_per_split;
+    int blk_end   = min(blk_start + blocks_per_split, n_blocks);
+    // Splits beyond this sequence's blocks: no work, write identity.
+    bool no_work = (blk_start >= n_blocks);
 
     extern __shared__ float smem[];
     float* q_tile = smem;
@@ -1296,11 +1307,23 @@ __global__ void paged_prefill_attention_batched_kernel(
         acc_val[qi] = 0.0f;
     }
 
-    if (n_blocks == 0) {
-        for (int qi = 0; qi < q_tile_rows; qi++)
-            if (tid < D)
-                out[((q_seq_start + q_tile_start + qi) * Hq + q_head) * D + tid]
-                    = static_cast<scalar_t>(0.0f);
+    if (n_blocks == 0 || no_work) {
+        // Zero output (identity split: l=0, m=-inf, acc=0).
+        for (int qi = 0; qi < q_tile_rows; qi++) {
+            int gr = q_seq_start + q_tile_start + qi;
+            if (num_splits <= 1) {
+                if (tid < D)
+                    out[(gr * Hq + q_head) * D + tid] = static_cast<scalar_t>(0.0f);
+            } else {
+                int base = (gr * Hq + q_head) * num_splits * (D + 2)
+                         + split * (D + 2);
+                if (tid < D) partial[base + tid] = 0.0f;
+                if (tid == 0) {
+                    partial[base + D]     = 0.0f;
+                    partial[base + D + 1] = -1e38f;
+                }
+            }
+        }
         return;
     }
 
@@ -1316,13 +1339,13 @@ __global__ void paged_prefill_attention_batched_kernel(
     auto* bt = flat_bt + seq * max_blocks;
 
     if (use_db) {
-        int phys0 = bt[0];
+        int phys0 = bt[blk_start];
         load_tile_float4<scalar_t>(k_tile0, v_tile0, k_pool, v_pool,
                                    phys0, kv_head, tid, bdim, D, Hkv);
         __syncthreads();
         int curr = 0;
-        for (int b = 0; b < n_blocks; b++) {
-            if (b + 1 < n_blocks) {
+        for (int b = blk_start; b < blk_end; b++) {
+            if (b + 1 < blk_end) {
                 int next_phys = bt[b + 1];
                 float* k_next = (curr == 0) ? k_tile1 : k_tile0;
                 float* v_next = (curr == 0) ? v_tile1 : v_tile0;
@@ -1358,7 +1381,7 @@ __global__ void paged_prefill_attention_batched_kernel(
             curr = 1 - curr;
         }
     } else {
-        for (int b = 0; b < n_blocks; b++) {
+        for (int b = blk_start; b < blk_end; b++) {
             int phys = bt[b];
             load_tile_float4<scalar_t>(k_tile0, v_tile0, k_pool, v_pool,
                                        phys, kv_head, tid, bdim, D, Hkv);
@@ -1390,9 +1413,19 @@ __global__ void paged_prefill_attention_batched_kernel(
 
     for (int qi = 0; qi < q_tile_rows; qi++) {
         int global_row = q_seq_start + q_tile_start + qi;
-        if (tid < D)
-            out[(global_row * Hq + q_head) * D + tid] =
-                static_cast<scalar_t>(acc_val[qi] / (l_val[qi] + 1e-8f));
+        if (num_splits <= 1) {
+            if (tid < D)
+                out[(global_row * Hq + q_head) * D + tid] =
+                    static_cast<scalar_t>(acc_val[qi] / (l_val[qi] + 1e-8f));
+        } else {
+            int base = (global_row * Hq + q_head) * num_splits * (D + 2)
+                     + split * (D + 2);
+            if (tid < D) partial[base + tid] = acc_val[qi];
+            if (tid == 0) {
+                partial[base + D]     = l_val[qi];
+                partial[base + D + 1] = m_val[qi];
+            }
+        }
     }
 }
 
@@ -1402,7 +1435,8 @@ void paged_prefill_attention_batched_gpu(
     int Hq, int Hkv, int D,
     const int* seq_start, const int* seq_count, const int* seq_len,
     const int* seq_abs_start, const int* flat_bt, int max_blocks,
-    int N, int P_total, float scale, class BlockAllocator& allocator)
+    int N, int P_total, float scale, class BlockAllocator& allocator,
+    int max_seq_hint)
 {
     int bdim = ((D + WARP - 1) / WARP) * WARP;
     if (bdim < 32) bdim = 32;
@@ -1440,7 +1474,18 @@ void paged_prefill_attention_batched_gpu(
     // Total q-tiles: upper bound from host-visible P_total (seq_count lives on
     // device and cannot be read here).  Kernel guards out-of-range tiles.
     int total_tiles = (P_total + B_r - 1) / B_r + N;
-    dim3 grid(total_tiles, Hq);
+
+    // Split-K for long sequences (matches the old decode paged_attention):
+    // >SPLIT_K_THRESHOLD tokens in the longest sequence => SPLIT_K partitions.
+    int num_splits = (max_seq_hint > SPLIT_K_THRESHOLD) ? SPLIT_K : 1;
+    dim3 grid(total_tiles, Hq, num_splits);
+
+    // Partial buffer for Split-K (long sequences): [Q_total, Hq, S, D+2] F32.
+    // short sequences write directly to out.
+    Tensor partial;  // empty for num_splits==1
+    if (num_splits > 1)
+        partial = Tensor({P_total * Hq * num_splits * (D + 2)}, DType::F32,
+                         Device::CUDA);
 
     DISPATCH_FLOAT_TYPES(dtype, "paged_prefill_attention_batched", {
         const scalar_t* k_raw =
@@ -1449,21 +1494,37 @@ void paged_prefill_attention_batched_gpu(
             static_cast<const scalar_t*>(allocator.v_storage_raw());
         paged_prefill_attention_batched_kernel<scalar_t><<<grid, bdim, smem>>>(
             static_cast<scalar_t*>(out_ptr),
+            num_splits > 1 ? partial.data<float>() : nullptr,
             static_cast<const scalar_t*>(q_ptr),
             k_raw, v_raw,
             Hq, Hkv, D,
             seq_start, seq_count, seq_len, seq_abs_start,
             flat_bt, max_blocks,
-            N, P_total, scale, B_r);
+            N, P_total, scale, B_r, num_splits);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
-            fprintf(stderr, "[paged_prefill] launch error: %s (grid=%d,%d bdim=%d smem=%zu B_r=%d)\n",
-                    cudaGetErrorString(err), grid.x, grid.y, bdim, smem, B_r);
+            fprintf(stderr, "[paged_prefill] launch error: %s (grid=%d,%d,%d bdim=%d smem=%zu B_r=%d)\n",
+                    cudaGetErrorString(err), grid.x, grid.y, grid.z, bdim, smem, B_r);
     });
     cudaDeviceSynchronize();
     cudaError_t serr = cudaGetLastError();
     if (serr != cudaSuccess)
         fprintf(stderr, "[paged_prefill] sync error: %s\n", cudaGetErrorString(serr));
+
+    // ---- Split-K reduce: merge num_splits partials per (q_row, head) ----
+    if (num_splits > 1) {
+        int reduce_bdim = ((D + WARP - 1) / WARP) * WARP;
+        if (reduce_bdim < 32) reduce_bdim = 32;
+        dim3 reduce_grid(P_total, Hq);
+        DISPATCH_FLOAT_TYPES(dtype, "paged_prefill_reduce", {
+            paged_attention_reduce_kernel<scalar_t>
+                <<<reduce_grid, reduce_bdim>>>(
+                    static_cast<scalar_t*>(out_ptr),
+                    partial.data<float>(),
+                    P_total, Hq, D, num_splits);
+        });
+        cudaDeviceSynchronize();
+    }
 }
 
 }  // namespace kv_cache
