@@ -90,9 +90,32 @@ Tensor gemm(const Tensor& a, const Tensor& b, bool transpose_b) {
 
     if(g_gemm_backend==GemmBackend::CuBLAS||fp16){
         float al=1,be=0;if(!g_handle)cublasCreate(&g_handle);
-        if(fp16)cublasGemmEx(g_handle,transpose_b?CUBLAS_OP_T:CUBLAS_OP_N,CUBLAS_OP_N,
-            N,M,K,&al,b.raw(),CUDA_R_16F,transpose_b?K:N,a.raw(),CUDA_R_16F,K,
-            &be,c.raw(),CUDA_R_16F,N,CUBLAS_COMPUTE_32F,CUBLAS_GEMM_DEFAULT);
+        if(fp16){
+            // Same M=16 alignment requirement as gemm_f16f32 (Tensor-Core path).
+            constexpr int GA=16;
+            int M_pad=(M+GA-1)/GA*GA;
+            const void* a_ptr=a.raw();
+            Tensor a_pad;
+            if(M_pad!=M){
+                a_pad=Tensor({M_pad,K},DType::F16,Device::CUDA);
+                cudaMemsetAsync(a_pad.raw(),0,static_cast<size_t>(M_pad)*K*sizeof(half),
+                                cudaStreamLegacy);
+                cudaMemcpyAsync(a_pad.raw(),a.raw(),static_cast<size_t>(M)*K*sizeof(half),
+                                cudaMemcpyDeviceToDevice,cudaStreamLegacy);
+                a_ptr=a_pad.raw();
+            }
+            Tensor c_pad({M_pad,N},fp16?DType::F16:DType::F32,Device::CUDA);
+            cublasGemmEx(g_handle,transpose_b?CUBLAS_OP_T:CUBLAS_OP_N,CUBLAS_OP_N,
+                N,M_pad,K,&al,b.raw(),CUDA_R_16F,transpose_b?K:N,a_ptr,CUDA_R_16F,K,
+                &be,c_pad.raw(),CUDA_R_16F,N,CUBLAS_COMPUTE_32F,CUBLAS_GEMM_DEFAULT);
+            if(M_pad==M){c=std::move(c_pad);}
+            else{
+                c=Tensor({M,N},fp16?DType::F16:DType::F32,Device::CUDA);
+                size_t row=static_cast<size_t>(N)*(fp16?sizeof(half):sizeof(float));
+                cudaMemcpy2DAsync(c.raw(),row,c_pad.raw(),row,row,M,
+                                  cudaMemcpyDeviceToDevice,cudaStreamLegacy);
+            }
+        }
         else cublasSgemm_v2(g_handle,transpose_b?CUBLAS_OP_T:CUBLAS_OP_N,CUBLAS_OP_N,
             N,M,K,&al,b.data<float>(),transpose_b?K:N,a.data<float>(),K,&be,c.data<float>(),N);
     }else{
@@ -112,22 +135,55 @@ Tensor gemm_f16f32(const Tensor& a, const Tensor& b, bool transpose_b) {
     if(a.dtype()!=DType::F16||b.dtype()!=DType::F16)
         throw std::runtime_error("gemm_f16f32: both inputs must be fp16");
 
-    Tensor c({M,N}, DType::F32, Device::CUDA);
+    // cuBLAS fp16 Tensor-Core GEMM requires M to be a multiple of 16.  When M
+    // is not aligned (e.g. prefill with T=1171 = 73*16+3), cuBLAS silently
+    // falls back to a generic (non-Tensor-Core) kernel that is ~60x slower
+    // (measured: 15.7ms vs 0.24ms for [1171,3584]x[3584,3584] on a 4090).
+    // Pad M up to the next 16-boundary with a copy of the input, run the
+    // aligned GEMM, then return only the first M output rows.  The padding
+    // cost is a memcpy of M*K elements (~0.1ms) vs 15ms saved.
+    constexpr int M_ALIGN = 16;
+    int M_pad = (M + M_ALIGN - 1) / M_ALIGN * M_ALIGN;
+    const void* a_ptr = a.raw();
+    Tensor a_pad;   // only used when M_pad != M
+    if (M_pad != M) {
+        a_pad = Tensor({M_pad, K}, DType::F16, Device::CUDA);
+        // Async zero-fill + copy: these run on the stream, so the host is NOT
+        // blocked (synchronous memcpy here cost ~ms per GEMM and, combined
+        // with the per-layer cudaDeviceSynchronize, dominated the prefill).
+        cudaMemsetAsync(a_pad.raw(), 0,
+                        static_cast<size_t>(M_pad) * K * sizeof(half),
+                        cudaStreamLegacy);
+        cudaMemcpyAsync(a_pad.raw(), a.raw(),
+                        static_cast<size_t>(M) * K * sizeof(half),
+                        cudaMemcpyDeviceToDevice, cudaStreamLegacy);
+        a_ptr = a_pad.raw();
+    }
+
+    Tensor c({M_pad, N}, DType::F32, Device::CUDA);
 
     float al=1, be=0;
     if(!g_handle) cublasCreate(&g_handle);
     cublasGemmEx(g_handle,
         transpose_b?CUBLAS_OP_T:CUBLAS_OP_N, CUBLAS_OP_N,
-        N, M, K,
+        N, M_pad, K,
         &al,
         b.raw(), CUDA_R_16F, transpose_b?K:N,
-        a.raw(), CUDA_R_16F, K,
+        a_ptr,   CUDA_R_16F, K,
         &be,
         c.raw(), CUDA_R_32F, N,          // ← fp32 output!
         CUBLAS_COMPUTE_32F,
         CUBLAS_GEMM_DEFAULT);
 
-    return std::move(c);
+    if (M_pad == M)
+        return std::move(c);
+    // Strip padding rows: [M_pad, N] -> [M, N]  (async)
+    Tensor c_out({M, N}, DType::F32, Device::CUDA);
+    cudaMemcpy2DAsync(c_out.raw(), static_cast<size_t>(N) * sizeof(float),
+                      c.raw(),     static_cast<size_t>(N) * sizeof(float),
+                      static_cast<size_t>(N) * sizeof(float), M,
+                      cudaMemcpyDeviceToDevice, cudaStreamLegacy);
+    return c_out;
 }
 
 

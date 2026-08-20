@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 
 #include <cuda_runtime.h>
@@ -69,6 +70,23 @@ void Tensor::allocate() {
         // Tensor.  This eliminates the ~1000 cudaMalloc/cudaFree driver calls
         // per speculative-draft step that made run_layers ~4-5x slower than the
         // regular decode path (pure inference optimization, no training).
+        //
+        // CRITICAL: the default pool releases blocks back to the driver as soon
+        // as the stream syncs (RELEASE_THRESHOLD=0), so every allocate() still
+        // hits the driver (~ms each) — with ~15 Tensor allocations per layer,
+        // 28 layers, that alone was ~2s of the prefill time.  Set a huge
+        // release threshold so blocks stay pooled and reuse is cheap.
+        static std::once_flag pool_configured;
+        std::call_once(pool_configured, [] {
+            cudaMemPool_t pool = nullptr;
+            int dev = 0;
+            cudaGetDevice(&dev);
+            if (cudaDeviceGetDefaultMemPool(&pool, dev) == cudaSuccess && pool) {
+                uint64_t keep = UINT64_MAX;   // never release back to driver
+                cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold,
+                                        &keep);
+            }
+        });
         cuda_check(cudaMallocAsync(&data_, bytes, cudaStreamLegacy), "cudaMallocAsync");
     } else {
         data_ = std::malloc(bytes);
