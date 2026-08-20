@@ -93,7 +93,10 @@ Tensor gemm(const Tensor& a, const Tensor& b, bool transpose_b) {
         if(fp16){
             // Same M=16 alignment requirement as gemm_f16f32 (Tensor-Core path).
             constexpr int GA=16;
-            int M_pad=(M+GA-1)/GA*GA;
+            // Only align when M > 16 (small M, e.g. M=1 decode lm_head with a
+            // huge N=vocab, needs no Tensor-Core padding; padding would run the
+            // GEMM on rows that don't exist -> out-of-bounds read).
+            int M_pad=(M>GA)?((M+GA-1)/GA*GA):M;
             const void* a_ptr=a.raw();
             Tensor a_pad;
             if(M_pad!=M){
@@ -143,7 +146,10 @@ Tensor gemm_f16f32(const Tensor& a, const Tensor& b, bool transpose_b) {
     // aligned GEMM, then return only the first M output rows.  The padding
     // cost is a memcpy of M*K elements (~0.1ms) vs 15ms saved.
     constexpr int M_ALIGN = 16;
-    int M_pad = (M + M_ALIGN - 1) / M_ALIGN * M_ALIGN;
+    // Only align when M > 16 (small M, e.g. M=1 decode lm_head with a huge
+    // N=vocab, needs no Tensor-Core padding; padding would run the GEMM on
+    // rows that don't exist -> out-of-bounds read).
+    int M_pad = (M > M_ALIGN) ? ((M + M_ALIGN - 1) / M_ALIGN * M_ALIGN) : M;
     const void* a_ptr = a.raw();
     Tensor a_pad;   // only used when M_pad != M
     if (M_pad != M) {

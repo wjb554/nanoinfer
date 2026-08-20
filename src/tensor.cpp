@@ -76,18 +76,22 @@ void Tensor::allocate() {
         // hits the driver (~ms each) — with ~15 Tensor allocations per layer,
         // 28 layers, that alone was ~2s of the prefill time.  Set a huge
         // release threshold so blocks stay pooled and reuse is cheap.
-        static std::once_flag pool_configured;
-        std::call_once(pool_configured, [] {
-            cudaMemPool_t pool = nullptr;
-            int dev = 0;
-            cudaGetDevice(&dev);
-            if (cudaDeviceGetDefaultMemPool(&pool, dev) == cudaSuccess && pool) {
-                uint64_t keep = UINT64_MAX;   // never release back to driver
-                cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold,
-                                        &keep);
-            }
-        });
-        cuda_check(cudaMallocAsync(&data_, bytes, cudaStreamLegacy), "cudaMallocAsync");
+        if (std::getenv("NANOINFER_DISABLE_POOL")) {
+            cuda_check(cudaMalloc(&data_, bytes), "cudaMalloc");
+        } else {
+            static std::once_flag pool_configured;
+            std::call_once(pool_configured, [] {
+                cudaMemPool_t pool = nullptr;
+                int dev = 0;
+                cudaGetDevice(&dev);
+                if (cudaDeviceGetDefaultMemPool(&pool, dev) == cudaSuccess && pool) {
+                    uint64_t keep = UINT64_MAX;   // never release back to driver
+                    cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold,
+                                            &keep);
+                }
+            });
+            cuda_check(cudaMallocAsync(&data_, bytes, cudaStreamLegacy), "cudaMallocAsync");
+        }
     } else {
         data_ = std::malloc(bytes);
         if (!data_) throw std::bad_alloc();

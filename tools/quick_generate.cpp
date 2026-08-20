@@ -82,7 +82,13 @@ int main(int argc, char** argv) {
     for (int t : ptoks) printf(" %d", t);
     printf("\n");
 
-    BatchMainLoop loop(engine, SchedulerPolicy::FCFS, 16, max_batch_tokens);
+    // Default chunk_size is VRAM-derived (large chunks = fewer prefill steps,
+    // bigger M per GEMM = better Tensor-Core utilisation).  NANOINFER_CHUNK
+    // overrides for testing.
+    int chunk_size = std::getenv("NANOINFER_CHUNK")
+                         ? std::atoi(std::getenv("NANOINFER_CHUNK"))
+                         : nanoinfer::engine::default_chunk_size();
+    BatchMainLoop loop(engine, SchedulerPolicy::FCFS, chunk_size, max_batch_tokens);
     if (k_spec > 0)
         loop.enable_speculative_decode(k_spec, draft_dir, draft_layers,
                                        verify_batch, prob_accept);
