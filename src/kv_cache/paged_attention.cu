@@ -924,10 +924,21 @@ __global__ void prefill_paged_attention_flash_kernel(
                     dot *= scale;
 
                     // Online softmax update for row qi
+                    // Online-softmax, exp-minimized: only ONE expf per (qi,kj).
+                    // When dot <= m (the common case, m is monotone non-decr),
+                    // correction = expf(m_old - m) = expf(0) = 1, so only
+                    // new_term needs expf.  When m actually advances (rare),
+                    // new_term = expf(0) = 1 and correction is the real expf.
                     float m_old = m_val[qi];
-                    m_val[qi] = fmaxf(m_old, dot);
-                    float correction = expf(m_old - m_val[qi]);
-                    float new_term   = expf(dot - m_val[qi]);
+                    float correction, new_term;
+                    if (dot > m_old) {
+                        m_val[qi]   = dot;
+                        correction  = expf(m_old - dot);
+                        new_term    = 1.0f;
+                    } else {
+                        correction  = 1.0f;
+                        new_term    = expf(dot - m_old);
+                    }
                     l_val[qi]   = l_val[qi]   * correction + new_term;
                     acc_val[qi] = acc_val[qi] * correction
                                 + new_term * v_curr[kj * D + tid];
@@ -1363,15 +1374,35 @@ __global__ void paged_prefill_attention_batched_kernel(
                     if (pos >= kv_len) break;
                     if (pos > abs_q_pos) break;   // causal
 
+                    // Warp-reduced dot product: instead of EVERY thread doing
+                    // the full D-dim dot (128x redundant), each lane computes
+                    // D/32 dims and a butterfly shfl_xor reduces across the
+                    // warp so every lane ends up with the complete dot.
+                    // ~D/32 = 4 FMA + 5 shfl instead of 128 FMA per thread.
                     float dot = 0.0f;
-                    for (int d = 0; d < D; d++)
+                    int lane = tid & 31;
+                    for (int d = lane; d < D; d += 32)
                         dot += q_tile[qi * D + d] * k_curr[kj * D + d];
+                    #pragma unroll
+                    for (int off = 16; off > 0; off >>= 1)
+                        dot += __shfl_xor_sync(0xffffffffu, dot, off);
                     dot *= scale;
 
+                    // Online-softmax, exp-minimized: only ONE expf per (qi,kj).
+                    // When dot <= m (the common case, m is monotone non-decr),
+                    // correction = expf(m_old - m) = expf(0) = 1, so only
+                    // new_term needs expf.  When m actually advances (rare),
+                    // new_term = expf(0) = 1 and correction is the real expf.
                     float m_old = m_val[qi];
-                    m_val[qi] = fmaxf(m_old, dot);
-                    float correction = expf(m_old - m_val[qi]);
-                    float new_term   = expf(dot - m_val[qi]);
+                    float correction, new_term;
+                    if (dot > m_old) {
+                        m_val[qi]   = dot;
+                        correction  = expf(m_old - dot);
+                        new_term    = 1.0f;
+                    } else {
+                        correction  = 1.0f;
+                        new_term    = expf(dot - m_old);
+                    }
                     l_val[qi]   = l_val[qi]   * correction + new_term;
                     acc_val[qi] = acc_val[qi] * correction
                                 + new_term * v_curr[kj * D + tid];
@@ -1393,9 +1424,14 @@ __global__ void paged_prefill_attention_batched_kernel(
                     if (pos >= kv_len) break;
                     if (pos > abs_q_pos) break;
 
+                    // Warp-reduced dot (same as double-buffer path).
                     float dot = 0.0f;
-                    for (int d = 0; d < D; d++)
+                    int lane = tid & 31;
+                    for (int d = lane; d < D; d += 32)
                         dot += q_tile[qi * D + d] * k_tile0[kj * D + d];
+                    #pragma unroll
+                    for (int off = 16; off > 0; off >>= 1)
+                        dot += __shfl_xor_sync(0xffffffffu, dot, off);
                     dot *= scale;
 
                     float m_old = m_val[qi];
