@@ -124,26 +124,29 @@ void scatter_prefill_kv_batched_gpu_dispatch(
     const int* token_cumsum, const int* flat_bt, int max_blocks,
     int N, int P_total, class BlockAllocator& allocator);
 
-/// Batched first-prefill attention — contiguous K/V, writes to attn_flat.
-/// Reads Q/K/V directly from flat tensors at per-entry offsets.
-/// Writes output directly into attn_flat at correct positions.
-/// Float-only; use first_prefill_attn_batched_gpu_dispatch() for fp16.
-void first_prefill_attn_batched_gpu(
-    float* out_ptr, const float* q_ptr, const float* k_ptr, const float* v_ptr,
-    int Hq, int Hkv, int D,
-    const int* offsets, const int* kv_offsets, const int* num_tokens,
-    const int* token_cumsum, const int* start_poss,
-    int N, int P_total, float scale);
-
-/// fp16-aware variant — dispatches on DType parameter.
-/// Pointers are void* and cast internally based on dtype.
-void first_prefill_attn_batched_gpu_dispatch(
+/// Unified batched prefill attention — reads K/V from paged blocks.
+///
+/// Handles ALL prefill entries of a step in ONE launch: first-prefill
+/// (historical==0) and chunked-prefill (historical>0) are just different
+/// seq_len / seq_abs_start values.  Always causal.  The caller MUST first
+/// scatter each sequence's current-chunk K/V into paged blocks (via
+/// scatter_prefill_kv_batched_gpu_dispatch), mirroring the single-sequence
+/// prefill_paged_attention() contract.
+///
+/// @param q_ptr         [P_total, Hq, D] flat queries for all entries
+/// @param seq_start     [N] first q-row of each sequence in q_ptr
+/// @param seq_count     [N] q-rows per sequence
+/// @param seq_len       [N] KV length per sequence (historical + current chunk)
+/// @param seq_abs_start [N] absolute position of each seq's first chunk token
+/// @param flat_bt       [N * max_blocks] flattened per-sequence block tables
+/// @param P_total       total q-rows across all sequences
+void paged_prefill_attention_batched_gpu(
+    void* out_ptr, const void* q_ptr,
     DType dtype,
-    void* out_ptr, const void* q_ptr, const void* k_ptr, const void* v_ptr,
     int Hq, int Hkv, int D,
-    const int* offsets, const int* kv_offsets, const int* num_tokens,
-    const int* token_cumsum, const int* start_poss,
-    int N, int P_total, float scale);
+    const int* seq_start, const int* seq_count, const int* seq_len,
+    const int* seq_abs_start, const int* flat_bt, int max_blocks,
+    int N, int P_total, float scale, class BlockAllocator& allocator);
 
 }  // namespace kv_cache
 }  // namespace nanoinfer

@@ -1225,180 +1225,245 @@ void scatter_prefill_kv_batched_gpu_dispatch(
 }
 
 // =========================================================================
-// L. Batched First-Prefill Attention — contiguous K/V, direct output
+// K'. Unified batched prefill attention — one block per (seq, q_tile, head).
 // =========================================================================
-// Grid: dim3((P_total + B_r - 1) / B_r, Hq)
-// Each block processes B_r Q rows. K/V read from contiguous linear memory
-// at per-entry offsets. Output written directly to attn_flat at correct
-// entry positions (no output copy-back needed).
+// Reads K/V directly from paged blocks (the caller must have scattered the
+// current chunk's K/V first, exactly like the single-sequence prefill path).
+// Handles ALL prefill entries of a step in one launch: first-prefill
+// (historical==0) and chunked-prefill (historical>0) are just seq_len /
+// seq_abs_start differences, so the kernel needs no phase distinction.
+// Always causal (queries attend only to positions <= their own).
+//
+// Grid: (total_q_tiles, Hq).  blockIdx.x maps to (seq, q_tile) via the
+// seq_start prefix sums.
 
 template<typename scalar_t>
-__global__ void first_prefill_attn_batched_kernel(
+__global__ void paged_prefill_attention_batched_kernel(
     scalar_t* __restrict__ out, const scalar_t* __restrict__ q,
-    const scalar_t* __restrict__ k, const scalar_t* __restrict__ v,
+    const scalar_t* __restrict__ k_pool, const scalar_t* __restrict__ v_pool,
     int Hq, int Hkv, int D,
-    const int* __restrict__ offsets, const int* __restrict__ kv_offsets,
-    const int* __restrict__ num_tokens, const int* __restrict__ token_cumsum,
-    const int* __restrict__ start_poss,
+    const int* __restrict__ seq_start, const int* __restrict__ seq_count,
+    const int* __restrict__ seq_len, const int* __restrict__ seq_abs_start,
+    const int* __restrict__ flat_bt, int max_blocks,
     int N, int P_total, float scale, int B_r)
 {
     int q_head       = blockIdx.y;
     int kv_head      = q_head / (Hq / Hkv);
-    int q_tile_start = blockIdx.x * B_r;
     int tid          = threadIdx.x;
     int bdim         = blockDim.x;
 
-    // Round up B_r to multiple of bdim for clean cooperative loads
-    int rounded_B_r = ((B_r + bdim - 1) / bdim) * bdim;
+    // ---- Map blockIdx.x → (seq, q_tile) by cumulative tile prefix sums ----
+    // cum_tiles[s] = total q-tiles of sequences 0..s-1.  blockIdx.x sits in
+    // the range [cum_tiles[seq], cum_tiles[seq]+tiles(seq)).
+    int cum_tiles = 0, seq = 0, prev_tiles = 0;
+    for (int s = 0; s < N; s++) {
+        int tiles = (seq_count[s] + B_r - 1) / B_r;
+        if (blockIdx.x < cum_tiles + tiles) { seq = s; break; }
+        cum_tiles += tiles;
+    }
+    if (seq >= N) return;   // out of range tile (P_total not a multiple of B_r)
+    int q_tile_idx = blockIdx.x - cum_tiles;
+
+    int q_tile_start = q_tile_idx * B_r;
+    int q_seq_start  = seq_start[seq];       // first q row of this seq
+    int q_seq_count  = seq_count[seq];
+    int q_tile_rows  = min(B_r, q_seq_count - q_tile_start);
+    int kv_len       = seq_len[seq];
+    int abs_start    = seq_abs_start[seq];
+    int n_blocks     = (kv_len + BLOCK - 1) / BLOCK;
 
     extern __shared__ float smem[];
-    float* q_tile = smem;  // [rounded_B_r * D]
-
-    // Cooperative load Q tile from flat q_flat at correct entry offsets
+    float* q_tile = smem;
+    // q_tile layout: [rounded_B_r, D]  (only q_tile_rows are meaningful)
+    // Use B_r directly (NOT rounded up to bdim): rounding inflates a B_r=1
+    // tile to bdim rows of shared memory, which for hd=128 makes the launch
+    // exceed the 64KB dynamic-smem ceiling.
+    int rounded_B_r = B_r > 0 ? B_r : 1;
     for (int i = tid; i < rounded_B_r * D; i += bdim) {
         int qi = i / D, d = i % D;
-        int global_row = q_tile_start + qi;
-        if (global_row < P_total) {
-            int entry = 0;
-            while (entry < N && global_row >= token_cumsum[entry + 1])
-                entry++;
-            int local_row = global_row - token_cumsum[entry];
-            q_tile[i] = static_cast<float>(
-                q[offsets[entry] + local_row * Hq * D + q_head * D + d]);
-        } else {
-            q_tile[i] = 0.0f;
-        }
+        int global_row = q_seq_start + q_tile_start + qi;
+        q_tile[i] = (qi < q_tile_rows)
+            ? static_cast<float>(q[(global_row * Hq + q_head) * D + d])
+            : 0.0f;
     }
     __syncthreads();
 
     constexpr int MAX_BR = 64;
     float m_val[MAX_BR], l_val[MAX_BR], acc_val[MAX_BR];
-    int actual_rows = min(B_r, P_total - q_tile_start);
-
-    for (int qi = 0; qi < actual_rows; qi++) {
-        m_val[qi] = -1e38f;
-        l_val[qi] = 0.0f;
+    for (int qi = 0; qi < q_tile_rows; qi++) {
+        m_val[qi]   = -1e38f;
+        l_val[qi]   = 0.0f;
         acc_val[qi] = 0.0f;
     }
 
-    // Process each Q row independently within its own entry
-    for (int qi = 0; qi < actual_rows; qi++) {
-        int global_row = q_tile_start + qi;
-        int entry = 0;
-        while (entry < N && global_row >= token_cumsum[entry + 1])
-            entry++;
-        int local_row  = global_row - token_cumsum[entry];
-        int abs_q_pos  = start_poss[entry] + local_row;
-        int kv_len     = num_tokens[entry];
-        int kv_base    = kv_offsets[entry];
+    if (n_blocks == 0) {
+        for (int qi = 0; qi < q_tile_rows; qi++)
+            if (tid < D)
+                out[((q_seq_start + q_tile_start + qi) * Hq + q_head) * D + tid]
+                    = static_cast<scalar_t>(0.0f);
+        return;
+    }
 
-        for (int pos = 0; pos < kv_len; pos++) {
-            int abs_pos = start_poss[entry] + pos;
-            if (abs_pos > abs_q_pos) break;
+    // ---- K/V tiling from paged blocks (Float4 + optional double buffer) ----
+    bool use_db = (rounded_B_r * D + 4 * BLOCK * D) * (int)sizeof(float)
+                     <= MAX_SHMEM;
+    float* k_tile0 = smem + rounded_B_r * D;
+    float* v_tile0 = smem + rounded_B_r * D + BLOCK * D;
+    int T = BLOCK * D;
+    float* k_tile1 = use_db ? (smem + rounded_B_r * D + 2 * T) : k_tile0;
+    float* v_tile1 = use_db ? (smem + rounded_B_r * D + 3 * T) : v_tile0;
 
-            // Dot product: q_tile[qi*D..] dot k_entry[pos*kv_head*D..]
-            float dot = 0.0f;
-            for (int d = 0; d < D; d++)
-                dot += q_tile[qi * D + d]
-                     * static_cast<float>(
-                         k[kv_base + pos * Hkv * D + kv_head * D + d]);
-            dot *= scale;
+    auto* bt = flat_bt + seq * max_blocks;
 
-            // Online softmax update
-            float m_old = m_val[qi];
-            m_val[qi] = fmaxf(m_old, dot);
-            float correction = expf(m_old - m_val[qi]);
-            float new_term   = expf(dot - m_val[qi]);
-            l_val[qi]   = l_val[qi] * correction + new_term;
-            acc_val[qi] = acc_val[qi] * correction
-                        + new_term * static_cast<float>(
-                            v[kv_base + pos * Hkv * D + kv_head * D + tid]);
+    if (use_db) {
+        int phys0 = bt[0];
+        load_tile_float4<scalar_t>(k_tile0, v_tile0, k_pool, v_pool,
+                                   phys0, kv_head, tid, bdim, D, Hkv);
+        __syncthreads();
+        int curr = 0;
+        for (int b = 0; b < n_blocks; b++) {
+            if (b + 1 < n_blocks) {
+                int next_phys = bt[b + 1];
+                float* k_next = (curr == 0) ? k_tile1 : k_tile0;
+                float* v_next = (curr == 0) ? v_tile1 : v_tile0;
+                load_tile_float4<scalar_t>(k_next, v_next, k_pool, v_pool,
+                                           next_phys, kv_head, tid, bdim, D, Hkv);
+            }
+            __syncthreads();
+            float* k_curr = (curr == 0) ? k_tile0 : k_tile1;
+            float* v_curr = (curr == 0) ? v_tile0 : v_tile1;
+
+            for (int qi = 0; qi < q_tile_rows; qi++) {
+                int abs_q_pos = abs_start + q_tile_start + qi;
+                for (int kj = 0; kj < BLOCK; kj++) {
+                    int pos = b * BLOCK + kj;
+                    if (pos >= kv_len) break;
+                    if (pos > abs_q_pos) break;   // causal
+
+                    float dot = 0.0f;
+                    for (int d = 0; d < D; d++)
+                        dot += q_tile[qi * D + d] * k_curr[kj * D + d];
+                    dot *= scale;
+
+                    float m_old = m_val[qi];
+                    m_val[qi] = fmaxf(m_old, dot);
+                    float correction = expf(m_old - m_val[qi]);
+                    float new_term   = expf(dot - m_val[qi]);
+                    l_val[qi]   = l_val[qi]   * correction + new_term;
+                    acc_val[qi] = acc_val[qi] * correction
+                                + new_term * v_curr[kj * D + tid];
+                }
+            }
+            __syncthreads();
+            curr = 1 - curr;
+        }
+    } else {
+        for (int b = 0; b < n_blocks; b++) {
+            int phys = bt[b];
+            load_tile_float4<scalar_t>(k_tile0, v_tile0, k_pool, v_pool,
+                                       phys, kv_head, tid, bdim, D, Hkv);
+            __syncthreads();
+            for (int qi = 0; qi < q_tile_rows; qi++) {
+                int abs_q_pos = abs_start + q_tile_start + qi;
+                for (int kj = 0; kj < BLOCK; kj++) {
+                    int pos = b * BLOCK + kj;
+                    if (pos >= kv_len) break;
+                    if (pos > abs_q_pos) break;
+
+                    float dot = 0.0f;
+                    for (int d = 0; d < D; d++)
+                        dot += q_tile[qi * D + d] * k_tile0[kj * D + d];
+                    dot *= scale;
+
+                    float m_old = m_val[qi];
+                    m_val[qi] = fmaxf(m_old, dot);
+                    float correction = expf(m_old - m_val[qi]);
+                    float new_term   = expf(dot - m_val[qi]);
+                    l_val[qi]   = l_val[qi]   * correction + new_term;
+                    acc_val[qi] = acc_val[qi] * correction
+                                + new_term * v_tile0[kj * D + tid];
+                }
+            }
+            __syncthreads();
         }
     }
 
-    // Write output to attn_flat at correct per-entry positions
-    for (int qi = 0; qi < actual_rows; qi++) {
-        int global_row = q_tile_start + qi;
-        int entry = 0;
-        while (entry < N && global_row >= token_cumsum[entry + 1])
-            entry++;
-        int local_row = global_row - token_cumsum[entry];
-        int out_row  = (offsets[entry] / (Hq * D)) + local_row;
+    for (int qi = 0; qi < q_tile_rows; qi++) {
+        int global_row = q_seq_start + q_tile_start + qi;
         if (tid < D)
-            out[(out_row * Hq + q_head) * D + tid] =
+            out[(global_row * Hq + q_head) * D + tid] =
                 static_cast<scalar_t>(acc_val[qi] / (l_val[qi] + 1e-8f));
     }
 }
 
-void first_prefill_attn_batched_gpu(
-    float* out_ptr, const float* q_ptr, const float* k_ptr, const float* v_ptr,
-    int Hq, int Hkv, int D,
-    const int* offsets, const int* kv_offsets, const int* num_tokens,
-    const int* token_cumsum, const int* start_poss,
-    int N, int P_total, float scale)
-{
-    int bdim = ((D + WARP - 1) / WARP) * WARP;
-    if (bdim < 32) bdim = 32;
-
-    // B_r: Q rows per tile, tuned per head dim
-    int B_r = (D <= 64) ? 64 : ((D <= 128) ? 48 : 32);
-    int rounded_B_r = ((B_r + bdim - 1) / bdim) * bdim;
-
-    size_t smem = rounded_B_r * D * sizeof(float);
-
-    dim3 grid((P_total + B_r - 1) / B_r, Hq);
-    first_prefill_attn_batched_kernel<float><<<grid, bdim, smem>>>(
-        out_ptr, q_ptr, k_ptr, v_ptr,
-        Hq, Hkv, D,
-        offsets, kv_offsets, num_tokens, token_cumsum, start_poss,
-        N, P_total, scale, B_r);
-    cudaDeviceSynchronize();
-}
-
-// fp16-aware overload — dispatches on DType parameter
-void first_prefill_attn_batched_gpu_dispatch(
+void paged_prefill_attention_batched_gpu(
+    void* out_ptr, const void* q_ptr,
     DType dtype,
-    void* out_ptr, const void* q_ptr, const void* k_ptr, const void* v_ptr,
     int Hq, int Hkv, int D,
-    const int* offsets, const int* kv_offsets, const int* num_tokens,
-    const int* token_cumsum, const int* start_poss,
-    int N, int P_total, float scale)
+    const int* seq_start, const int* seq_count, const int* seq_len,
+    const int* seq_abs_start, const int* flat_bt, int max_blocks,
+    int N, int P_total, float scale, class BlockAllocator& allocator)
 {
     int bdim = ((D + WARP - 1) / WARP) * WARP;
     if (bdim < 32) bdim = 32;
 
-    // B_r: Q rows per tile, tuned per head dim
-    int B_r = (D <= 64) ? 64 : ((D <= 128) ? 48 : 32);
-    int rounded_B_r = ((B_r + bdim - 1) / bdim) * bdim;
+    // B_r: Q rows per tile.  For small total prefill (short prompts, e.g. the
+    // concurrent serving case where each entry is a handful of tokens), tile
+    // with 1 row per block so a 64-row tile isn't wasted on 3-5 real rows.
+    // For large prefill use the head-dim-tuned tile size.
+    int B_r = (P_total <= 64) ? 1 : (D <= 64 ? 64 : (D <= 128 ? 48 : 32));
+    // Use B_r directly (NOT rounded up to bdim): rounding inflates a B_r=1
+    // tile to bdim rows of shared memory, which for hd=128 makes the launch
+    // exceed the 64KB dynamic-smem ceiling.
+    int rounded_B_r = B_r > 0 ? B_r : 1;
 
-    size_t smem = rounded_B_r * D * sizeof(float);
+    // Shared memory: Q tile + K/V tiles (single or double buffered)
+    bool use_db = (rounded_B_r * D + 4 * BLOCK * D) * (int)sizeof(float)
+                     <= MAX_SHMEM;
+    size_t smem = use_db
+        ? (rounded_B_r * D + 4 * BLOCK * D) * sizeof(float)
+        : (rounded_B_r * D + 2 * BLOCK * D) * sizeof(float);
+
     // head_dim >= 128 pushes dynamic shared memory past the default 48 KB
     // (sm_75 allows 64 KB), so the launch fails and the output stays zero.
     // Opt in to the larger limit for both float and half instantiations.
     static bool smem_attr_set = false;
     if (!smem_attr_set) {
         cudaFuncSetAttribute(
-            first_prefill_attn_batched_kernel<float>,
+            paged_prefill_attention_batched_kernel<float>,
             cudaFuncAttributeMaxDynamicSharedMemorySize, 64 * 1024);
         cudaFuncSetAttribute(
-            first_prefill_attn_batched_kernel<half>,
+            paged_prefill_attention_batched_kernel<half>,
             cudaFuncAttributeMaxDynamicSharedMemorySize, 64 * 1024);
         smem_attr_set = true;
     }
+    // Total q-tiles: upper bound from host-visible P_total (seq_count lives on
+    // device and cannot be read here).  Kernel guards out-of-range tiles.
+    int total_tiles = (P_total + B_r - 1) / B_r + N;
+    dim3 grid(total_tiles, Hq);
 
-    dim3 grid((P_total + B_r - 1) / B_r, Hq);
-
-    DISPATCH_FLOAT_TYPES(dtype, "first_prefill_attn_batched", {
-        first_prefill_attn_batched_kernel<scalar_t><<<grid, bdim, smem>>>(
+    DISPATCH_FLOAT_TYPES(dtype, "paged_prefill_attention_batched", {
+        const scalar_t* k_raw =
+            static_cast<const scalar_t*>(allocator.k_storage_raw());
+        const scalar_t* v_raw =
+            static_cast<const scalar_t*>(allocator.v_storage_raw());
+        paged_prefill_attention_batched_kernel<scalar_t><<<grid, bdim, smem>>>(
             static_cast<scalar_t*>(out_ptr),
             static_cast<const scalar_t*>(q_ptr),
-            static_cast<const scalar_t*>(k_ptr),
-            static_cast<const scalar_t*>(v_ptr),
+            k_raw, v_raw,
             Hq, Hkv, D,
-            offsets, kv_offsets, num_tokens, token_cumsum, start_poss,
+            seq_start, seq_count, seq_len, seq_abs_start,
+            flat_bt, max_blocks,
             N, P_total, scale, B_r);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess)
+            fprintf(stderr, "[paged_prefill] launch error: %s (grid=%d,%d bdim=%d smem=%zu B_r=%d)\n",
+                    cudaGetErrorString(err), grid.x, grid.y, bdim, smem, B_r);
     });
     cudaDeviceSynchronize();
+    cudaError_t serr = cudaGetLastError();
+    if (serr != cudaSuccess)
+        fprintf(stderr, "[paged_prefill] sync error: %s\n", cudaGetErrorString(serr));
 }
 
 }  // namespace kv_cache

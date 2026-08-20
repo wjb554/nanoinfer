@@ -19,14 +19,18 @@ int default_batch_tokens() {
 }
 
 int default_chunk_size() {
-    // KEEP 16.  Raising the default is gated on first-prefill attention being
-    // made block-tiled: the current first_prefill_attn_batched kernel is O(T^2)
-    // per entry, so a large chunk makes a long single-request prompt SLOWER
-    // (measured: chunk=501 vs 16 roughly doubles TTFT at 300-800 prompt tokens).
-    // Until that kernel is tiled, a small chunk keeps each prefill step's T
-    // small and lets the fast tiled chunked-prefill path handle the rest.
-    (void)0;
-    return 16;
+    // ~1/4 of the batch budget, clamped to [64, 1024].  Now that prefill
+    // attention is a single tiled batched kernel (no O(T^2) first-prefill
+    // path), large chunks no longer hurt long prompts — measured on 7B:
+    // chunk=501 vs 16 gives ~equal or better TTFT (500 tok: 1008 vs 1299 ms).
+    size_t free_bytes = 0, total_bytes = 0;
+    if (cudaMemGetInfo(&free_bytes, &total_bytes) == cudaSuccess && total_bytes > 0) {
+        int t = static_cast<int>((total_bytes >> 20) / 48);  // total MB / 48
+        if (t < 64) t = 64;
+        if (t > 1024) t = 1024;
+        return t;
+    }
+    return 128;
 }
 
 }  // namespace engine

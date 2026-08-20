@@ -475,6 +475,8 @@ private:
     Tensor d_prefill_start_poss_;     // [N] int32
     Tensor d_prefill_token_cumsum_;   // [N+1] int32
     Tensor d_prefill_bt_flat_;        // [N * max_blocks_per_seq_] int32
+    Tensor d_prefill_seq_len_;        // [N] int32 (historical + chunk)
+    Tensor d_prefill_seq_start_;      // [N] int32 (q-row offset in q_flat)
 
     // ---- Speculative Decoding ----
     SpeculativeDecodeConfig spec_cfg_;

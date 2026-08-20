@@ -1929,24 +1929,22 @@ std::vector<SampledToken> EngineServer::step(
         const float* k_ptr = k_flat.data<float>();
         const float* v_ptr = v_flat.data<float>();
 
-        // ----- 3d-i. SPLIT PREFILL into first-prefill and chunked-prefill -----
-        // First-prefill (historical==0): K/V contiguous, batch entirely.
-        // Chunked-prefill (historical>0): needs paged attention, keep per-entry.
+        // ----- 3d-i. UNIFIED batched prefill -----
+        // Both first-prefill (historical==0) and chunked-prefill (>0) are
+        // handled in ONE batched scatter + ONE batched attention kernel.
+        // The unified attention kernel reads K/V from paged blocks (scattered
+        // just below) and is always causal; the only per-entry differences are
+        // seq_len (= historical + chunk) and seq_abs_start (= start_pos).
 
-        std::vector<int> first_prefill_idxs;
-        std::vector<int> chunked_prefill_idxs;
+        std::vector<int> prefill_idxs;
         for (int idx : prefill_indices) {
             auto it = states.find(step.entries[idx].request_idx);
             if (it == states.end()) continue;
-            if (it->second->num_prefilled == 0)
-                first_prefill_idxs.push_back(idx);
-            else
-                chunked_prefill_idxs.push_back(idx);
+            prefill_idxs.push_back(idx);
         }
 
-        // ===== Batched first-prefill (common case) =====
-        if (!first_prefill_idxs.empty()) {
-            int N = static_cast<int>(first_prefill_idxs.size());
+        if (!prefill_idxs.empty()) {
+            int N = static_cast<int>(prefill_idxs.size());
 
             // Build per-entry metadata
             std::vector<int> offsets(N);
@@ -1954,13 +1952,15 @@ std::vector<SampledToken> EngineServer::step(
             std::vector<int> num_tokens(N);
             std::vector<int> start_poss(N);
             std::vector<int> token_cumsum(N + 1);
+            std::vector<int> seq_len(N);
+            std::vector<int> seq_start(N);
             token_cumsum[0] = 0;
             int P_total = 0;
 
             std::vector<int> bt_flat(N * max_blocks_per_seq_, -1);
 
             for (int j = 0; j < N; j++) {
-                int idx = first_prefill_idxs[j];
+                int idx = prefill_idxs[j];
                 const auto& entry = step.entries[idx];
                 auto [start, end] = entry_map[idx];
                 auto& state = *states[entry.request_idx];
@@ -1969,6 +1969,8 @@ std::vector<SampledToken> EngineServer::step(
                 kv_offsets[j] = start * Hkv_ * hd_;
                 num_tokens[j] = entry.num_tokens;
                 start_poss[j] = entry.start_pos;
+                seq_start[j]  = P_total;                    // q-row offset in q_flat
+                seq_len[j]    = state.num_prefilled + entry.num_tokens;
                 P_total += entry.num_tokens;
                 token_cumsum[j + 1] = token_cumsum[j] + entry.num_tokens;
 
@@ -1988,9 +1990,11 @@ std::vector<SampledToken> EngineServer::step(
                 d_prefill_token_cumsum_  = Tensor({cap + 1}, DType::I32, Device::CUDA);
                 d_prefill_bt_flat_ = Tensor({cap * max_blocks_per_seq_},
                                              DType::I32, Device::CUDA);
+                d_prefill_seq_len_       = Tensor({cap}, DType::I32, Device::CUDA);
+                d_prefill_seq_start_     = Tensor({cap}, DType::I32, Device::CUDA);
             }
 
-            // Upload metadata to device (H2D copies, 6 arrays, O(N) total)
+            // Upload metadata to device (H2D copies, 8 arrays, O(N) total)
             cudaMemcpy(d_prefill_offsets_.raw(),
                        offsets.data(), N * sizeof(int), cudaMemcpyHostToDevice);
             cudaMemcpy(d_prefill_kv_offsets_.raw(),
@@ -2005,8 +2009,12 @@ std::vector<SampledToken> EngineServer::step(
             cudaMemcpy(d_prefill_bt_flat_.raw(),
                        bt_flat.data(), bt_flat.size() * sizeof(int),
                        cudaMemcpyHostToDevice);
+            cudaMemcpy(d_prefill_seq_len_.raw(),
+                       seq_len.data(), N * sizeof(int), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_prefill_seq_start_.raw(),
+                       seq_start.data(), N * sizeof(int), cudaMemcpyHostToDevice);
 
-            // ONE scatter kernel for all first-prefill K/V -> paged blocks
+            // ONE scatter kernel for all prefill K/V -> paged blocks
             // DType::F32 — q_flat/k_flat/v_flat are always F32 from gemm/gemm_f16f32.
             kv_cache::scatter_prefill_kv_batched_gpu_dispatch(
                 DType::F32,
@@ -2021,82 +2029,20 @@ std::vector<SampledToken> EngineServer::step(
                 N, P_total,
                 *kv_allocators_[l]);
 
-            // ONE attention kernel: contiguous K/V, writes to attn_flat
+            // ONE unified attention kernel: reads paged K/V, always causal,
+            // writes output directly to attn_flat (all prefill entries).
             float scale = 1.0f / sqrtf(static_cast<float>(hd_));
-            kv_cache::first_prefill_attn_batched_gpu_dispatch(
-                DType::F32,
-                attn_ptr, q_ptr, k_ptr, v_ptr,
+            kv_cache::paged_prefill_attention_batched_gpu(
+                attn_ptr, q_ptr, DType::F32,
                 Hq_, Hkv_, hd_,
-                d_prefill_offsets_.data<int>(),
-                d_prefill_kv_offsets_.data<int>(),
+                d_prefill_seq_start_.data<int>(),
                 d_prefill_num_tokens_.data<int>(),
-                d_prefill_token_cumsum_.data<int>(),
+                d_prefill_seq_len_.data<int>(),
                 d_prefill_start_poss_.data<int>(),
-                N, P_total, scale);
-        }
-
-        // ===== Chunked prefill (historical > 0, rare) — per-entry =====
-        for (int idx : chunked_prefill_idxs) {
-            const auto& entry = step.entries[idx];
-            auto [start, end] = entry_map[idx];
-            int chunk_size = entry.num_tokens;
-            auto it = states.find(entry.request_idx);
-            if (it == states.end()) continue;
-            auto& state = *it->second;
-
-            int historical = state.num_prefilled;
-            int total_seq = historical + chunk_size;
-
-            // Extract Q slice: [chunk_size, Hq, hd]
-            Tensor q_i({chunk_size, Hq_, hd_}, DType::F32, Device::CUDA);
-            cudaMemcpy(q_i.raw(),
-                       q_ptr + start * Hq_ * hd_,
-                       chunk_size * Hq_ * hd_ * sizeof(float),
-                       cudaMemcpyDeviceToDevice);
-
-            // Extract K slice: [chunk_size, Hkv, hd]
-            Tensor k_i({chunk_size, Hkv_, hd_}, DType::F32, Device::CUDA);
-            cudaMemcpy(k_i.raw(),
-                       k_ptr + start * Hkv_ * hd_,
-                       chunk_size * Hkv_ * hd_ * sizeof(float),
-                       cudaMemcpyDeviceToDevice);
-
-            // Extract V slice: [chunk_size, Hkv, hd]
-            Tensor v_i({chunk_size, Hkv_, hd_}, DType::F32, Device::CUDA);
-            cudaMemcpy(v_i.raw(),
-                       v_ptr + start * Hkv_ * hd_,
-                       chunk_size * Hkv_ * hd_ * sizeof(float),
-                       cudaMemcpyDeviceToDevice);
-
-            // Build device-side block table for this sequence.
-            int bt_len = state.block_tables[l].size();
-            std::vector<int> h_bt(max_blocks_per_seq_, -1);
-            for (int i = 0; i < bt_len; i++)
-                h_bt[i] = state.block_tables[l][i];
-            Tensor d_bt({max_blocks_per_seq_}, DType::I32, Device::CUDA);
-            d_bt.copy_from(h_bt.data(), max_blocks_per_seq_ * sizeof(int));
-
-            kv_cache::scatter_prefill_kv_gpu(
-                k_i, v_i,
-                entry.start_pos, chunk_size,
-                d_bt.data<int>(), max_blocks_per_seq_,
-                *kv_allocators_[l]);
-
-            Tensor d_seq_len({1}, DType::I32, Device::CUDA);
-            d_seq_len.copy_from(&total_seq, sizeof(int));
-
-            Tensor a_out = attn_backend_->prefill_paged_attention(
-                q_i,
-                d_bt.data<int>(),
+                d_prefill_bt_flat_.data<int>(),
                 max_blocks_per_seq_,
-                d_seq_len.data<int>(),
-                *kv_allocators_[l],
-                false);
-
-            cudaMemcpy(attn_ptr + start * Hq_ * hd_,
-                       a_out.raw(),
-                       chunk_size * Hq_ * hd_ * sizeof(float),
-                       cudaMemcpyDeviceToDevice);
+                N, P_total, scale,
+                *kv_allocators_[l]);
         }
 
         // ----- 3d-ii. Decode entries (batched paged_attention) -----
