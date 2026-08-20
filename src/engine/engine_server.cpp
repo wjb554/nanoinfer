@@ -1172,10 +1172,13 @@ Tensor EngineServer::forward_layers_impl(
             k = layer_gemm(normed, L.k, L.k_f8, L.k_s, true);
             v = layer_gemm(normed, L.v, L.v_f8, L.v_s, true);
         }
-        // Qwen2 keeps attention-projection biases (see EngineLayerW).
-        ops::add_bias_inplace(q, L.qb);
-        ops::add_bias_inplace(k, L.kb);
-        ops::add_bias_inplace(v, L.vb);
+        // Qwen2 keeps attention-projection biases (see EngineLayerW);
+        // Llama/Mistral drop them (ArchSpec::qkv_bias=false).
+        if (spec.qkv_bias) {
+            ops::add_bias_inplace(q, L.qb);
+            ops::add_bias_inplace(k, L.kb);
+            ops::add_bias_inplace(v, L.vb);
+        }
         q.reshape_inplace({T, spec.num_heads, spec.head_dim});
         k.reshape_inplace({T, spec.num_kv_heads, spec.head_dim});
         v.reshape_inplace({T, spec.num_kv_heads, spec.head_dim});
@@ -1867,9 +1870,12 @@ std::vector<SampledToken> EngineServer::step(
         }
         // Qwen2 keeps attention-projection biases; without them q/k/v are
         // wrong (bias magnitude ~100) and attention output is garbage.
-        ops::add_bias_inplace(q_flat, L.qb);
-        ops::add_bias_inplace(k_flat, L.kb);
-        ops::add_bias_inplace(v_flat, L.vb);
+        // Llama/Mistral drop them (ArchSpec::qkv_bias=false).
+        if (arch_->has_qkv_bias()) {
+            ops::add_bias_inplace(q_flat, L.qb);
+            ops::add_bias_inplace(k_flat, L.kb);
+            ops::add_bias_inplace(v_flat, L.vb);
+        }
 
         q_flat.reshape_inplace({total_tokens, Hq_, hd_});
         k_flat.reshape_inplace({total_tokens, Hkv_, hd_});

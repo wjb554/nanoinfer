@@ -41,7 +41,9 @@ ArchSpec make_arch_spec(const ModelConfig& cfg) {
     s.rope_theta = cfg.rope_theta;
     s.rms_norm_eps = cfg.rms_norm_eps;
     // Qwen2 keeps the q/k/v projection biases (reference semantics).
-    s.qkv_bias = true;
+    // Llama / Mistral drop them (attention_bias=false) — config-driven.
+    s.qkv_bias = !(cfg.architecture == "LlamaForCausalLM" ||
+                   cfg.architecture == "MistralForCausalLM");
     // pre-LN block layout (norm first, then attention/MLP with residuals).
     s.pre_norm = true;
     // Untied models (Qwen2.5-7B, tie_word_embeddings=false) carry a separate
@@ -51,18 +53,14 @@ ArchSpec make_arch_spec(const ModelConfig& cfg) {
 }
 
 // ============================================================================
-// Qwen2Arch
+// LlamaLikeArch — shared weight layout for Qwen2 / Llama / Mistral
 // ============================================================================
 
-Qwen2Arch::Qwen2Arch(const ArchSpec& spec) : spec_(spec) {}
+LlamaLikeArch::LlamaLikeArch(std::string name, bool qkv_bias, const ArchSpec& spec)
+    : name_(std::move(name)), qkv_bias_(qkv_bias), spec_(spec) {}
 
-const std::string& Qwen2Arch::name() const {
-    static const std::string kName = "Qwen2ForCausalLM";
-    return kName;
-}
-
-std::string Qwen2Arch::layer_weight_name(int layer, const std::string& kind,
-                                         const std::string& suffix) const {
+std::string LlamaLikeArch::layer_weight_name(int layer, const std::string& kind,
+                                             const std::string& suffix) const {
     // Reproduces the exact strings the engine previously hardcoded:
     //   model.layers.{layer}.self_attn.{q,k,v,o}_proj.{weight,bias}
     //   model.layers.{layer}.mlp.{gate,up,down}_proj.{weight,bias}
@@ -72,11 +70,11 @@ std::string Qwen2Arch::layer_weight_name(int layer, const std::string& kind,
     if (kind == "gate" || kind == "up" || kind == "down")
         return prefix + ".mlp." + kind + "_proj." + suffix;
     throw std::runtime_error(
-        "Qwen2Arch: unknown layer weight kind '" + kind + "'");
+        name_ + ": unknown layer weight kind '" + kind + "'");
 }
 
-std::string Qwen2Arch::layer_norm_name(int layer,
-                                       const std::string& kind) const {
+std::string LlamaLikeArch::layer_norm_name(int layer,
+                                           const std::string& kind) const {
     // Reproduces the exact strings the engine previously hardcoded:
     //   model.layers.{layer}.input_layernorm.weight
     //   model.layers.{layer}.post_attention_layernorm.weight
@@ -87,17 +85,30 @@ std::string Qwen2Arch::layer_norm_name(int layer,
                                  : "";
     if (!name[0])
         throw std::runtime_error(
-            "Qwen2Arch: unknown layer norm kind '" + kind + "'");
+            name_ + ": unknown layer norm kind '" + kind + "'");
     return "model.layers." + std::to_string(layer) + "." + name + ".weight";
 }
 
-std::string Qwen2Arch::embed_name() const { return "model.embed_tokens.weight"; }
+std::string LlamaLikeArch::embed_name() const {
+    return "model.embed_tokens.weight";
+}
 
-std::string Qwen2Arch::final_norm_name() const { return "model.norm.weight"; }
+std::string LlamaLikeArch::final_norm_name() const { return "model.norm.weight"; }
 
-std::string Qwen2Arch::lm_head_name() const { return "lm_head.weight"; }
+std::string LlamaLikeArch::lm_head_name() const { return "lm_head.weight"; }
 
-bool Qwen2Arch::has_qkv_bias() const { return true; }
+// ============================================================================
+// Concrete architectures — the only differences are name + q/k/v bias
+// ============================================================================
+
+Qwen2Arch::Qwen2Arch(const ArchSpec& spec)
+    : LlamaLikeArch("Qwen2ForCausalLM", /*qkv_bias=*/true, spec) {}
+
+LlamaArch::LlamaArch(const ArchSpec& spec)
+    : LlamaLikeArch("LlamaForCausalLM", /*qkv_bias=*/false, spec) {}
+
+MistralArch::MistralArch(const ArchSpec& spec)
+    : LlamaLikeArch("MistralForCausalLM", /*qkv_bias=*/false, spec) {}
 
 // ============================================================================
 // Architecture registry + factory
@@ -116,6 +127,10 @@ std::unique_ptr<IModelArchitecture> create_model_architecture(
     static const std::map<std::string, Factory> factories = {
         {"Qwen2ForCausalLM",
          [](const ArchSpec& s) { return std::make_unique<Qwen2Arch>(s); }},
+        {"LlamaForCausalLM",
+         [](const ArchSpec& s) { return std::make_unique<LlamaArch>(s); }},
+        {"MistralForCausalLM",
+         [](const ArchSpec& s) { return std::make_unique<MistralArch>(s); }},
     };
 
     auto it = factories.find(name);

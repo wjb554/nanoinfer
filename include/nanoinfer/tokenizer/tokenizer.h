@@ -39,6 +39,10 @@ private:
     // vs a linear scan over 151387 merges (which made long-text encode hang).
     std::unordered_map<std::string, int> merge_rank_;
     std::unordered_map<std::string, unsigned char> byte_decoder_;
+    // SentencePiece-style BPE (Llama / Mistral): spaces are "▁" (U+2581), not
+    // the GPT-2 "Ġ".  Detected from the vocab at load: vocab contains "▁".
+    // Encode/decode take different (simpler) paths in this mode.
+    bool sp_style_ = false;
 };
 
 }  // namespace tokenizer

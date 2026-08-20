@@ -147,10 +147,22 @@ Tokenizer::Tokenizer(const std::string& path) {
 
     if (id_to_token_.empty()) throw std::runtime_error("tokenizer.json: empty vocab");
 
-    // ---- Build byte decoder ----
-    const char* b2u = byte_to_unicode();
-    for (int b = 0; b < 256; b++) {
-        byte_decoder_[std::string(b2u + b*4)] = (unsigned char)b;
+    // ---- Detect tokenizer style ----
+    // GPT-2 byte-level (Qwen2): vocab holds byte-to-unicode chars ("Ġ", ...),
+    // space byte maps to "Ġ" (U+0120).  SentencePiece-style (Llama/Mistral):
+    // vocab holds "▁" (U+2581) for space; the normalizer prepends ▁ to the text
+    // and replaces ' ' with ▁.  Detection: does the vocab contain "▁"?
+    sp_style_ = (token_to_id_.count("\xe2\x96\x81") > 0);  // UTF-8 for U+2581
+
+    // ---- Build byte decoder (GPT-2 byte-level only) ----
+    // SentencePiece-style decode is plain string concat with ▁->' '; the
+    // byte_decoder_ maps byte-to-unicode chars back to raw bytes and is only
+    // meaningful for the GPT-2 byte-level scheme.
+    if (!sp_style_) {
+        const char* b2u = byte_to_unicode();
+        for (int b = 0; b < 256; b++) {
+            byte_decoder_[std::string(b2u + b*4)] = (unsigned char)b;
+        }
     }
 }
 
@@ -165,7 +177,24 @@ std::string Tokenizer::decode(const std::vector<int>& token_ids) const {
     std::string result;
     for (int id : token_ids) {
         const auto& s = id_to_str(id);
-        // Replace byte-level encoded chars with actual bytes
+        if (sp_style_) {
+            // SentencePiece-style (Llama/Mistral): tokens are literal text with
+            // "▁" (U+2581) standing for space.  Replace ▁ with ' ', keep the
+            // rest as-is.  Special tokens (<s>, </s>) appear verbatim, matching
+            // HF's default (skip_special_tokens=false) behaviour.
+            for (size_t i = 0; i < s.size();) {
+                if ((unsigned char)s[i] == 0xE2 && i + 2 < s.size()
+                    && (unsigned char)s[i+1] == 0x96 && (unsigned char)s[i+2] == 0x81) {
+                    result += ' ';
+                    i += 3;
+                } else {
+                    result += s[i];
+                    i++;
+                }
+            }
+            continue;
+        }
+        // GPT-2 byte-level (Qwen2): replace byte-encoded chars with actual bytes
         size_t i = 0;
         while (i < s.size()) {
             // Check for multi-byte UTF-8 sequences
@@ -211,11 +240,32 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
     // Full BPE encoding
     const char* b2u = byte_to_unicode();
 
-    // Step 1: Convert text to BPE tokens (one per byte initially)
+    // Step 1: Convert text to BPE tokens (one per byte/char initially)
     std::vector<std::string> tokens;
-    for (char c : text) {
-        unsigned char b = (unsigned char)c;
-        tokens.push_back(std::string(b2u + b*4));
+    if (sp_style_) {
+        // SentencePiece-style (Llama/Mistral): the normalizer prepends "▁" to the
+        // text and replaces every ' ' with "▁".  The vocab stores "▁" (U+2581)
+        // directly as UTF-8, so each char becomes one initial token (space -> ▁).
+        // The UTF-8 bytes of a char are kept together (a ▁-prefix char is 3 bytes).
+        auto sp_append = [&](const std::string& ch) { tokens.push_back(ch); };
+        sp_append("\xe2\x96\x81");  // leading "▁" (like HF's Prepend normalizer)
+        for (size_t i = 0; i < text.size();) {
+            unsigned char c = (unsigned char)text[i];
+            int len = 1;
+            if (c >= 0xF0) len = 4;
+            else if (c >= 0xE0) len = 3;
+            else if (c >= 0xC0) len = 2;
+            std::string ch = text.substr(i, len);
+            i += len;
+            if (ch == " ") sp_append("\xe2\x96\x81");  // ' ' -> "▁"
+            else sp_append(ch);
+        }
+    } else {
+        // GPT-2 byte-level (Qwen2): one token per byte, byte -> unicode char.
+        for (char c : text) {
+            unsigned char b = (unsigned char)c;
+            tokens.push_back(std::string(b2u + b*4));
+        }
     }
 
     // Step 2: Apply BPE merges GREEDILY (HF-style).  At each round merge every

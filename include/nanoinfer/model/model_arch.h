@@ -60,13 +60,21 @@ public:
     virtual bool has_qkv_bias() const = 0;
 };
 
-/// Reference architecture — structurally identical HF weight names for Qwen2.
-class Qwen2Arch : public IModelArchitecture {
+/// Shared base for the Llama-family weight layout (Qwen2 / Llama / Mistral).
+///
+/// All three families use IDENTICAL HF tensor names:
+///   model.layers.{i}.self_attn.{q,k,v,o}_proj.{weight,bias}
+///   model.layers.{i}.mlp.{gate,up,down}_proj.{weight,bias}
+///   model.layers.{i}.{input,post_attention}_layernorm.weight
+///   model.embed_tokens.weight / model.norm.weight / lm_head.weight
+/// The ONLY engine-relevant difference is whether q/k/v carry biases:
+/// Qwen2 keeps them (attention_bias=true), Llama/Mistral drop them.
+class LlamaLikeArch : public IModelArchitecture {
 public:
-    explicit Qwen2Arch(const ArchSpec& spec);
+    LlamaLikeArch(std::string name, bool qkv_bias, const ArchSpec& spec);
 
     const ArchSpec& spec() const override { return spec_; }
-    const std::string& name() const override;  // "Qwen2ForCausalLM"
+    const std::string& name() const override { return name_; }
 
     std::string layer_weight_name(int layer, const std::string& kind,
                                   const std::string& suffix) const override;
@@ -74,14 +82,35 @@ public:
     std::string embed_name() const override;      // "model.embed_tokens.weight"
     std::string final_norm_name() const override; // "model.norm.weight"
     std::string lm_head_name() const override;    // "lm_head.weight"
-    bool has_qkv_bias() const override;           // true
+    bool has_qkv_bias() const override { return qkv_bias_; }
 
 private:
+    std::string name_;
+    bool qkv_bias_;
     ArchSpec spec_;
+};
+
+/// Reference architecture — Qwen2 keeps the q/k/v projection biases.
+class Qwen2Arch : public LlamaLikeArch {
+public:
+    explicit Qwen2Arch(const ArchSpec& spec);
+};
+
+/// LlamaForCausalLM — same weight layout, no q/k/v biases.
+class LlamaArch : public LlamaLikeArch {
+public:
+    explicit LlamaArch(const ArchSpec& spec);
+};
+
+/// MistralForCausalLM — identical to Llama (no q/k/v biases).
+class MistralArch : public LlamaLikeArch {
+public:
+    explicit MistralArch(const ArchSpec& spec);
 };
 
 /// Create an IModelArchitecture by canonical HF architecture name.
 ///   - empty name or "Qwen2ForCausalLM" -> Qwen2Arch (the reference).
+///   - "LlamaForCausalLM" -> LlamaArch; "MistralForCausalLM" -> MistralArch.
 ///   - unknown name -> throws std::runtime_error listing the registered names.
 std::unique_ptr<IModelArchitecture> create_model_architecture(
     const std::string& arch_name, const ArchSpec& spec);
