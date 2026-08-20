@@ -93,7 +93,13 @@ public:
     virtual int num_active() const = 0;
 
     /// Factory: create scheduler by policy.
-    static std::unique_ptr<Scheduler> create(SchedulerPolicy policy, int chunk_size = 16);
+    ///   chunk_size         max prompt tokens per prefill entry (0 = VRAM-derived)
+    ///   max_batch_tokens   per-step token budget for DecodeFirst (0 = VRAM-derived)
+    ///   max_prefill_entries max prefill entries per step (DecodeFirst only)
+    static std::unique_ptr<Scheduler> create(SchedulerPolicy policy,
+                                             int chunk_size = 0,
+                                             int max_batch_tokens = 0,
+                                             int max_prefill_entries = 999);
 };
 
 // ============================================================================

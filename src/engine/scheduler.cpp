@@ -1,5 +1,6 @@
 /// Scheduler implementations — FCFS, PrefillFirst.
 #include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/engine/tuning.h"
 #include <algorithm>
 #include <stdexcept>
 
@@ -7,14 +8,23 @@ namespace nanoinfer {
 namespace engine {
 
 // ===== Factory ==============================================================
-std::unique_ptr<Scheduler> Scheduler::create(SchedulerPolicy policy, int chunk_size) {
+std::unique_ptr<Scheduler> Scheduler::create(SchedulerPolicy policy,
+                                             int chunk_size,
+                                             int max_batch_tokens,
+                                             int max_prefill_entries) {
+    // 0 in either budget arg means "derive from VRAM" (engine/tuning.h), so a
+    // caller like ServerEngine that just passes max_batch_tokens gets the same
+    // derivation as the benchmark tools instead of a hardcoded 256.
+    int chunk  = chunk_size       > 0 ? chunk_size       : default_chunk_size();
+    int budget = max_batch_tokens > 0 ? max_batch_tokens : default_batch_tokens();
     switch (policy) {
         case SchedulerPolicy::FCFS:
-            return std::make_unique<FCFSScheduler>(chunk_size);
+            return std::make_unique<FCFSScheduler>(chunk);
         case SchedulerPolicy::PrefillFirst:
-            return std::make_unique<PrefillFirstScheduler>(chunk_size);
+            return std::make_unique<PrefillFirstScheduler>(chunk);
         case SchedulerPolicy::DecodeFirst:
-            return std::make_unique<DecodeFirstScheduler>(chunk_size, 256, 999);
+            return std::make_unique<DecodeFirstScheduler>(chunk, budget,
+                                                          max_prefill_entries);
         default:
             throw std::runtime_error("Unknown scheduler policy");
     }

@@ -65,11 +65,15 @@ void ServeMetrics::recent_tpot(double& avg, double& maxv, int& count) const {
 // ServerEngine
 // ============================================================================
 ServerEngine::ServerEngine(const std::string& model_dir, int max_seq_len,
-                           int max_batch_tokens, bool use_fp16)
+                           int max_batch_tokens, bool use_fp16, int chunk_size)
     : engine_(std::make_unique<EngineServer>(
           model_dir, max_seq_len, max_batch_tokens,
           /*kv_cache_mb=*/0, kv_cache::prefix_cache_policy_from_env(), use_fp16)),
-      sched_(Scheduler::create(SchedulerPolicy::DecodeFirst, 16)) {
+      // Pass max_batch_tokens down to the scheduler so the server batch is not
+      // silently capped at the factory's old hardcoded 256.  chunk_size 0 =
+      // VRAM-derived default.
+      sched_(Scheduler::create(SchedulerPolicy::DecodeFirst, chunk_size,
+                               max_batch_tokens, /*max_prefill_entries=*/999)) {
     vocab_size_ = engine_->vocab_size();
 }
 

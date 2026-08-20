@@ -73,6 +73,7 @@ set(NANOINFER_SOURCES
     src/server/http_server.cpp
     src/server/server_engine.cpp
     src/engine/scheduler.cpp
+    src/engine/tuning.cpp
     src/engine/engine_server.cpp
     src/engine/draft_engine.cpp
     src/engine/batch_loop.cpp
@@ -110,6 +111,7 @@ set(NANOINFER_HEADERS
     include/nanoinfer/server/http_server.h
     include/nanoinfer/server/server_engine.h
     include/nanoinfer/engine/scheduler.h
+    include/nanoinfer/engine/tuning.h
     include/nanoinfer/tokenizer/tokenizer.h
     include/nanoinfer/engine/engine.h
     include/nanoinfer/engine/draft_engine.h

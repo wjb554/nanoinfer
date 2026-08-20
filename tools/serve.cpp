@@ -3,7 +3,7 @@
 ///
 /// Usage:
 ///   serve [--model <dir>] [--fp16] [--port <p>] [--max-batch-tokens <n>]
-///         [--max-seq-len <n>]
+///         [--chunk-size <n>] [--max-seq-len <n>]
 ///
 /// Endpoints:
 ///   GET  /health                -> {"status":"ok"}
@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "picojson.h"
+#include "nanoinfer/engine/tuning.h"
 #include "nanoinfer/server/http_server.h"
 #include "nanoinfer/server/server_engine.h"
 #include "nanoinfer/tokenizer/tokenizer.h"
@@ -115,8 +116,9 @@ int main(int argc, char** argv) {
     std::string model_dir = "models/qwen2.5-0.5b";
     bool use_fp16 = true;   // FP16 default; pass --fp32 for exact-FP32 repro
     int port = 8080;
-    int max_batch_tokens = 256;
+    int max_batch_tokens = nanoinfer::engine::default_batch_tokens();
     int max_seq_len = 2048;
+    int chunk_size = 0;     // 0 = VRAM-derived prefill chunk
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--model") && i + 1 < argc)         model_dir = argv[++i];
@@ -125,6 +127,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--port") && i + 1 < argc)     port = std::atoi(argv[++i]);
         else if (!strcmp(argv[i], "--max-batch-tokens") && i + 1 < argc)
             max_batch_tokens = std::atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--chunk-size") && i + 1 < argc)
+            chunk_size = std::atoi(argv[++i]);
         else if (!strcmp(argv[i], "--max-seq-len") && i + 1 < argc)
             max_seq_len = std::atoi(argv[++i]);
         else {
@@ -138,12 +142,15 @@ int main(int argc, char** argv) {
     printf("  precision:        %s\n", use_fp16 ? "FP16" : "FP32");
     printf("  port:             %d\n", port);
     printf("  max batch tokens: %d\n", max_batch_tokens);
+    printf("  chunk size:       %d\n", chunk_size > 0 ? chunk_size
+                                   : nanoinfer::engine::default_chunk_size());
     printf("  max seq len:      %d\n", max_seq_len);
     fflush(stdout);
 
     nanoinfer::tokenizer::Tokenizer tokenizer(model_dir + "/tokenizer.json");
 
-    ServerEngine engine(model_dir, max_seq_len, max_batch_tokens, use_fp16);
+    ServerEngine engine(model_dir, max_seq_len, max_batch_tokens, use_fp16,
+                        chunk_size);
     engine.start();
     printf("  vocab:            %d\n", engine.vocab_size());
     printf("=====================================\n");

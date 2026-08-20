@@ -11,6 +11,7 @@
 ///   bench_server ../models/Qwen2.5-0.5B-Instruct 2048 256
 
 #include "nanoinfer/engine/scheduler.h"
+#include "nanoinfer/engine/tuning.h"
 #include "nanoinfer/engine/engine.h"
 #include "nanoinfer/kv_cache/block_allocator.h"
 #include "nanoinfer/tensor.h"
@@ -35,12 +36,14 @@ int main(int argc, char** argv) {
     // Args: [model_dir] [max_seq_len] [max_batch_tokens] [--model <dir>] [--fp16]
     std::string model_dir = "models/qwen2.5-0.5b";
     int  max_seq_len      = 2048;
-    int  max_batch_tokens = 256;
+    int  max_batch_tokens = nanoinfer::engine::default_batch_tokens();
+    int  chunk_size       = 0;  // 0 = VRAM-derived prefill chunk
     bool use_fp16         = false;
     std::vector<std::string> pos;
     for (int i = 1; i < argc; i++) {
         if      (!strcmp(argv[i], "--model") && i+1 < argc) model_dir = argv[++i];
         else if (!strcmp(argv[i], "--fp16"))                use_fp16  = true;
+        else if (!strcmp(argv[i], "--chunk-size") && i+1 < argc) chunk_size = std::atoi(argv[++i]);
         else                                                pos.push_back(argv[i]);
     }
     if (pos.size() > 0) model_dir         = pos[0];
@@ -54,7 +57,8 @@ int main(int argc, char** argv) {
     printf("  Max seq len:    %d\n", max_seq_len);
     printf("  Max batch tok:  %d\n", max_batch_tokens);
     printf("  Precision:      %s\n", use_fp16 ? "FP16 (Tensor Core)" : "FP32");
-    printf("  Scheduler:      DecodeFirst (chunk_size=16)\n");
+    printf("  Scheduler:      DecodeFirst (chunk_size=%d)\n",
+           chunk_size > 0 ? chunk_size : nanoinfer::engine::default_chunk_size());
     printf("============================================================\n\n");
 
     // ------------------------------------------------------------------
@@ -68,7 +72,8 @@ int main(int argc, char** argv) {
     printf("[init] Model loaded. Hidden dim=%d, vocab=%d, layers=%d\n",
            engine.hidden_dim(), engine.vocab_size(), engine.num_layers());
 
-    auto sched = Scheduler::create(SchedulerPolicy::DecodeFirst, 16);
+    auto sched = Scheduler::create(SchedulerPolicy::DecodeFirst, chunk_size,
+                                   max_batch_tokens, /*max_prefill_entries=*/999);
     std::unordered_map<int, std::unique_ptr<RequestState>> states;
 
     // ------------------------------------------------------------------

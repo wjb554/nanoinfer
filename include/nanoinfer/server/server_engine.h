@@ -79,8 +79,13 @@ struct ServeMetrics {
 // ============================================================================
 class ServerEngine {
 public:
+    /// @param max_batch_tokens per-step token budget (0 = VRAM-derived);
+    ///                         applied to BOTH the engine's activation budget
+    ///                         and the DecodeFirst scheduler.
+    /// @param chunk_size       max prompt tokens per prefill entry
+    ///                         (0 = VRAM-derived).
     ServerEngine(const std::string& model_dir, int max_seq_len,
-                 int max_batch_tokens, bool use_fp16);
+                 int max_batch_tokens, bool use_fp16, int chunk_size = 0);
     ~ServerEngine();
 
     ServerEngine(const ServerEngine&) = delete;

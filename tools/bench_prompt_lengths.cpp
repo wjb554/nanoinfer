@@ -8,6 +8,7 @@
 /// Usage:
 ///   bench_prompt_lengths [--model <dir>] [--fp16] [--max-new N]
 ///                        [--lengths a,b,c,...] [--max-batch-tokens N]
+///                        [--chunk-size N]
 ///                        [--out <logfile>]
 ///
 /// Example:
@@ -90,6 +91,7 @@ int main(int argc, char** argv) {
     int  max_new = 100;
     float temperature = 0.0f;   // greedy (deterministic) by default
     int  max_batch_tokens = 0;
+    int  chunk_size = 16;       // prefill chunk per step (16 = legacy; raise to cut TTFT)
     std::vector<int> lengths = {50, 100, 200, 300, 400, 500};
     std::string out_file = "prompt_lengths.log";
 
@@ -101,6 +103,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--max-new") && i+1 < argc)         max_new = std::atoi(argv[++i]);
         else if (!strcmp(argv[i], "--temp") && i+1 < argc)            temperature = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "--max-batch-tokens") && i+1<argc)  max_batch_tokens = std::atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--chunk-size") && i+1 < argc)      chunk_size = std::atoi(argv[++i]);
         else if (!strcmp(argv[i], "--out") && i+1 < argc)             out_file = argv[++i];
         else if (!strcmp(argv[i], "--lengths") && i+1 < argc) {
             lengths.clear();
@@ -165,7 +168,7 @@ int main(int argc, char** argv) {
         engine.clear_kv_cache();
 
         // One request through BatchMainLoop.
-        BatchMainLoop loop(engine, SchedulerPolicy::FCFS, /*chunk_size=*/16, max_batch_tokens);
+        BatchMainLoop loop(engine, SchedulerPolicy::FCFS, chunk_size, max_batch_tokens);
         int id = loop.submit(prompt, max_new, eos, "", "", temperature);
         loop.run();
 

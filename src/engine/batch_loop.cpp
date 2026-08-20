@@ -46,16 +46,10 @@ BatchMainLoop::BatchMainLoop(EngineServer& engine,
     , max_batch_tokens_(max_batch_tokens)
     , epoch_(std::chrono::steady_clock::now())
 {
-    // For DecodeFirst we bypass the factory so we can pass the
-    // user-specified max_batch_tokens (the factory hardcodes 256).
-    // For all other policies the factory signature matches.
-    if (policy == SchedulerPolicy::DecodeFirst) {
-        scheduler_ = std::make_unique<DecodeFirstScheduler>(chunk_size_,
-                                                            max_batch_tokens_,
-                                                            max_prefill_entries);
-    } else {
-        scheduler_ = Scheduler::create(policy, chunk_size_);
-    }
+    // The factory now accepts all four tuning knobs (chunk/batch/entries), so
+    // there is no need to special-case DecodeFirst here.
+    scheduler_ = Scheduler::create(policy, chunk_size_, max_batch_tokens_,
+                                   max_prefill_entries);
 
     printf("[BatchMainLoop] policy=%d chunk_size=%d max_batch_tokens=%d max_prefill_entries=%d\n",
            static_cast<int>(policy), chunk_size_, max_batch_tokens_, max_prefill_entries);
